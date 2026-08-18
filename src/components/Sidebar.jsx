@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { Plus, Settings, GitCompareArrows, Bot, Trash2, Search, Sparkles, Pin, PictureInPicture2 } from 'lucide-react'
+import { Plus, Settings, GitCompareArrows, Bot, Trash2, Search, Sparkles, Pin, PictureInPicture2, Folder, FolderPlus, X } from 'lucide-react'
 
 const DAY = 86400000
 
@@ -12,17 +12,19 @@ function groupOf(ts) {
   return 'Más antiguas'
 }
 
-export default function Sidebar({ convos, activeId, view, onNew, onSelect, onDelete, onRename, onTogglePin, onViewChange, onOpenSettings, providers, configuredCount }) {
+export default function Sidebar({ convos, activeId, view, onNew, onSelect, onDelete, onRename, onTogglePin, onSetFolder, onRemoveFolder, onViewChange, onOpenSettings, providers, configuredCount }) {
   const [filter, setFilter] = useState('')
   const [editingId, setEditingId] = useState(null)
   const [editTitle, setEditTitle] = useState('')
   const [alwaysOnTop, setAlwaysOnTop] = useState(false)
+  const [folderOpen, setFolderOpen] = useState(null)
   const list = filter
     ? convos.filter((c) => c.title?.toLowerCase().includes(filter.toLowerCase()))
     : convos
   const sorted = [...list].sort((a, b) => ((b.pinned ? 1 : 0) - (a.pinned ? 1 : 0)) || b.updatedAt - a.updatedAt)
   const pinned = sorted.filter((c) => c.pinned)
-  const rest = sorted.filter((c) => !c.pinned)
+  const folders = [...new Set(sorted.map((c) => c.folder).filter(Boolean))]
+  const rest = sorted.filter((c) => !c.pinned && !c.folder)
   const groups = []
   for (const g of ['Hoy', 'Ayer', 'Últimos 7 días', 'Más antiguas']) {
     const items = rest.filter((c) => groupOf(c.updatedAt || c.createdAt || 0) === g)
@@ -37,9 +39,10 @@ export default function Sidebar({ convos, activeId, view, onNew, onSelect, onDel
     setEditingId(null)
   }
 
-  const rowProps = {
+const rowProps = {
     activeId, editingId, editTitle, setEditingId, setEditTitle, commitRename,
-    onSelect, onTogglePin, onDelete, providerName, providerColor
+    onSelect, onTogglePin, onDelete, providerName, providerColor,
+    folders, folderOpen, setFolderOpen, onSetFolder
   }
 
   return (
@@ -78,6 +81,17 @@ export default function Sidebar({ convos, activeId, view, onNew, onSelect, onDel
                 {pinned.map((c) => <ConvoRow key={c.id} c={c} {...rowProps} />)}
               </div>
             )}
+            {folders.map((f) => (
+              <div key={f} className="convo-group">
+                <div className="convo-group-head folder-head">
+                  <Folder size={11} /> {f}
+                  <button className="icon-btn danger" title="Quitar esta carpeta (las conversaciones vuelven a su sitio)" onClick={(e) => { e.stopPropagation(); if (confirm(`¿Quitar la carpeta "${f}"? Las conversaciones se moverán fuera.`)) onRemoveFolder(f) }}>
+                    <X size={11} />
+                  </button>
+                </div>
+                {sorted.filter((c) => c.folder === f).map((c) => <ConvoRow key={c.id} c={c} {...rowProps} />)}
+              </div>
+            ))}
             {groups.map((g) => (
               <div key={g.name} className="convo-group">
                 <div className="convo-group-head">{g.name}</div>
@@ -106,7 +120,11 @@ export default function Sidebar({ convos, activeId, view, onNew, onSelect, onDel
   )
 }
 
-function ConvoRow({ c, activeId, editingId, editTitle, setEditingId, setEditTitle, commitRename, onSelect, onTogglePin, onDelete, providerName, providerColor }) {
+function ConvoRow({ c, activeId, editingId, editTitle, setEditingId, setEditTitle, commitRename, onSelect, onTogglePin, onDelete, providerName, providerColor, folders, folderOpen, setFolderOpen, onSetFolder }) {
+  const pickFolder = (f) => {
+    onSetFolder(c.id, f)
+    setFolderOpen(null)
+  }
   return (
     <div className={`convo ${c.id === activeId ? 'active' : ''} ${c.pinned ? 'pinned' : ''}`} onClick={() => onSelect(c.id)}>
       <span className="convo-dot" style={{ background: providerColor(c.provider) }} />
@@ -133,14 +151,33 @@ function ConvoRow({ c, activeId, editingId, editTitle, setEditingId, setEditTitl
             {c.title || 'Sin título'}
           </div>
         )}
-        <div className="convo-sub">{providerName(c.provider)} · {c.count} msgs</div>
+        <div className="convo-sub">{providerName(c.provider)} · {c.count} msgs{c.folder ? ` · ${c.folder}` : ''}</div>
       </div>
-      <button className={`icon-btn convo-pin ${c.pinned ? 'pinned' : ''}`} onClick={(e) => { e.stopPropagation(); onTogglePin(c.id) }} title={c.pinned ? 'Desfijar conversación' : 'Fijar conversación'}>
-        <Pin size={14} />
-      </button>
-      <button className="icon-btn danger convo-del" onClick={(e) => { e.stopPropagation(); onDelete(c.id) }} title="Eliminar">
-        <Trash2 size={14} />
-      </button>
+      <div className="convo-actions">
+        {folderOpen === c.id && (
+          <div className="folder-menu" onClick={(e) => e.stopPropagation()}>
+            <div className="folder-menu-title">Mover a carpeta</div>
+            {folders.map((f) => (
+              <button key={f} className={`folder-opt ${c.folder === f ? 'sel' : ''}`} onClick={() => pickFolder(f)}><Folder size={12} /> {f}</button>
+            ))}
+            <button className="folder-opt" onClick={() => {
+              setFolderOpen(null)
+              const name = prompt('Nombre de la carpeta:')
+              if (name && name.trim()) pickFolder(name.trim())
+            }}><FolderPlus size={12} /> Nueva carpeta…</button>
+            {c.folder && <button className="folder-opt danger" onClick={() => pickFolder('')}><X size={12} /> Quitar de la carpeta</button>}
+          </div>
+        )}
+        <button className={`icon-btn convo-folder ${c.folder ? 'has' : ''}`} onClick={(e) => { e.stopPropagation(); setFolderOpen(folderOpen === c.id ? null : c.id) }} title={c.folder ? `Carpeta: ${c.folder}` : 'Mover a carpeta'}>
+          <Folder size={13} />
+        </button>
+        <button className={`icon-btn convo-pin ${c.pinned ? 'pinned' : ''}`} onClick={(e) => { e.stopPropagation(); onTogglePin(c.id) }} title={c.pinned ? 'Desfijar conversación' : 'Fijar conversación'}>
+          <Pin size={14} />
+        </button>
+        <button className="icon-btn danger convo-del" onClick={(e) => { e.stopPropagation(); onDelete(c.id) }} title="Eliminar">
+          <Trash2 size={14} />
+        </button>
+      </div>
     </div>
   )
 }

@@ -105,6 +105,31 @@ body {
 .convo-del { opacity: 0; }
 .convo:hover .convo-del { opacity: 1; }
 
+.convo-actions { display: flex; align-items: center; gap: 2px; position: relative; }
+.convo-folder { opacity: 0; }
+.convo:hover .convo-folder { opacity: 1; }
+.convo-folder.has { opacity: 1; color: var(--accent2); background: var(--panel3); }
+.folder-head { justify-content: space-between; }
+.folder-head .icon-btn { width: 20px; height: 20px; opacity: 0; }
+.folder-head:hover .icon-btn { opacity: 1; }
+.folder-menu {
+  position: absolute; right: 0; top: 100%; z-index: 60;
+  background: var(--panel3); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  padding: 6px; min-width: 180px;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.folder-menu-title { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); padding: 4px 8px 6px; }
+.folder-opt {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  background: none; border: none; color: var(--text); font-size: 12.5px;
+  padding: 7px 8px; border-radius: 7px; cursor: pointer; text-align: left;
+  transition: background 0.1s;
+}
+.folder-opt:hover { background: var(--panel2); }
+.folder-opt.sel { color: var(--accent2); background: var(--panel2); }
+.folder-opt.danger { color: #ff8fa3; }
+
 .empty-hint { color: var(--muted); font-size: 12px; text-align: center; padding: 24px 8px; }
 
 .sidebar-foot { padding: 10px 12px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 8px; }
@@ -376,7 +401,16 @@ body {
 }
 @keyframes float { 50% { transform: translateY(-5px); } }
 .welcome h2 { font-size: 22px; margin-bottom: 8px; }
-.welcome .hint { margin-bottom: 22px; }
+.welcome .hint { margin-bottom: 18px; }
+
+.welcome-stats { display: flex; justify-content: center; gap: 10px; margin-bottom: 16px; }
+.stat {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+  padding: 10px 18px; min-width: 110px; display: flex; flex-direction: column; gap: 2px;
+}
+.stat strong { font-size: 18px; background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.stat span { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+.welcome-actions { display: flex; justify-content: center; gap: 10px; margin-bottom: 18px; }
 
 .suggestions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .suggestion {

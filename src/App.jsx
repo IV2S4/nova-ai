@@ -122,7 +122,7 @@ export default function App() {
     const c = makeConv(p)
     setConv(c)
     setActiveId(c.id)
-    setConvos([...h, { id: c.id, title: c.title, provider: c.provider, model: c.model, createdAt: c.createdAt, updatedAt: c.updatedAt, count: 0, pinned: false }])
+    setConvos([...h, { id: c.id, title: c.title, provider: c.provider, model: c.model, createdAt: c.createdAt, updatedAt: c.updatedAt, count: 0, pinned: false, folder: '' }])
   }
 
   const busy = () => streamsRef.current.size > 0
@@ -147,7 +147,7 @@ export default function App() {
       await window.api.saveHistory(resolved)
       const item = {
         id: resolved.id, title: resolved.title, provider: resolved.provider, model: resolved.model,
-        createdAt: resolved.createdAt, updatedAt: resolved.updatedAt, count: resolved.messages.length, pinned: !!resolved.pinned
+        createdAt: resolved.createdAt, updatedAt: resolved.updatedAt, count: resolved.messages.length, pinned: !!resolved.pinned, folder: resolved.folder || ''
       }
       setConvos((h) => {
         const exists = h.some((c) => c.id === resolved.id)
@@ -203,6 +203,30 @@ export default function App() {
       }
     })
     setConvos((h) => h.map((c) => (c.id === id ? { ...c, pinned: !c.pinned } : c)))
+  }
+
+  const setFolder = (id, folder) => {
+    const apply = (c) => {
+      c.folder = folder || ''
+      c.updatedAt = Date.now()
+      window.api.saveHistory(c)
+    }
+    if (id === activeId && convRef.current) {
+      updateConv({ ...convRef.current, folder: folder || '', updatedAt: Date.now() })
+      return
+    }
+    window.api.getHistory(id).then((c) => { if (c) apply(c) })
+    setConvos((h) => h.map((c) => (c.id === id ? { ...c, folder: folder || '' } : c)))
+  }
+
+  const removeFolder = (folder) => {
+    for (const c of convos.filter((x) => x.folder === folder)) {
+      if (c.id === activeId && convRef.current) updateConv({ ...convRef.current, folder: '' })
+      else {
+        window.api.getHistory(c.id).then((x) => { if (x) { x.folder = ''; window.api.saveHistory(x) } })
+      }
+    }
+    setConvos((h) => h.map((c) => (c.folder === folder ? { ...c, folder: '' } : c)))
   }
 
   const renameConvo = (id, title) => {
@@ -279,6 +303,8 @@ export default function App() {
         onDelete={deleteConvo}
         onRename={renameConvo}
         onTogglePin={togglePin}
+        onSetFolder={setFolder}
+        onRemoveFolder={removeFolder}
         onViewChange={setView}
         onOpenSettings={() => setSettingsOpen(true)}
         providers={providers}
@@ -298,6 +324,8 @@ export default function App() {
             hasAnyProvider={configuredCount > 0}
             onReloadProviders={refreshProviders}
             notify={notify}
+            convos={convos}
+            onViewChange={setView}
           />
         ) : view === 'agent' ? (
           <AgentView

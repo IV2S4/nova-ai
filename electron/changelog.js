@@ -1,5 +1,13 @@
 module.exports = {
   entries: {
+    '1.8.0': [
+      'CARPETAS de conversaciones: organiza tus chats por temas (botón de carpeta en cada conversación, "Nueva carpeta…" y quitar carpeta)',
+      'Pantalla inicial renovada: estadísticas (conversaciones, mensajes, IA conectadas), accesos directos a Comparador y Agente, y 10 plantillas de mensajes con un clic',
+      'Exporta tus conversaciones a PDF (con formato, vía printToPDF) y a Word (.docx real abierto por Word) además de Markdown y HTML',
+      'Auditoría: verificación de todos los modelos de OpenAI, Mistral, Anthropic y xAI contra sus APIs (IDs obsoletos corregidos)',
+      'Publicado el proyecto en GitHub (IV2S4/nova-ai) con release automático del instalador: "Buscar actualizaciones" ya funciona de verdad',
+      'Limpiado el entorno: eliminado un package.json suelto de la carpeta de usuario que rompía electron-builder'
+    ],
     '1.7.0': [
       'NUEVO LOGO e instalador profesional: Nova AI ahora tiene icono propio (gradiente púrpura-cyan con la N) y genera un instalador .exe completo con acceso directo en escritorio',
       'Pega imágenes directamente con Ctrl+V en el chat y arrastra archivos a la ventana para adjuntarlos',

@@ -442,6 +442,46 @@ ipcMain.handle('export:text', async (e, { defaultName, content }) => {
   }
 })
 
+ipcMain.handle('export:file', async (e, { defaultName, filters, base64 }) => {
+  try {
+    const win = BrowserWindow.fromWebContents(e.sender)
+    const { canceled, filePath } = await dialog.showSaveDialog(win, {
+      title: 'Exportar conversación',
+      defaultPath: defaultName,
+      filters: filters && filters.length ? filters : [{ name: 'Todos', extensions: ['*'] }]
+    })
+    if (canceled || !filePath) return { ok: false }
+    fs.writeFileSync(filePath, Buffer.from(base64, 'base64'))
+    return { ok: true, filePath }
+  } catch (err) {
+    return { ok: false, error: err.message }
+  }
+})
+
+ipcMain.handle('export:pdf', async (e, { defaultName, html }) => {
+  try {
+    const win = BrowserWindow.fromWebContents(e.sender)
+    const pdfWin = new BrowserWindow({ show: false, webPreferences: { offscreen: true, sandbox: true } })
+    await pdfWin.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html))
+    const pdf = await pdfWin.webContents.printToPDF({
+      pageSize: 'A4',
+      printBackground: true,
+      margins: { top: 0.5, bottom: 0.5, left: 0.5, right: 0.5 }
+    })
+    pdfWin.destroy()
+    const { canceled, filePath } = await dialog.showSaveDialog(win, {
+      title: 'Guardar PDF',
+      defaultPath: defaultName,
+      filters: [{ name: 'PDF', extensions: ['pdf'] }]
+    })
+    if (canceled || !filePath) return { ok: false }
+    fs.writeFileSync(filePath, pdf)
+    return { ok: true, filePath }
+  } catch (err) {
+    return { ok: false, error: err.message }
+  }
+})
+
 ipcMain.handle('stt:transcribe', async (_e, { base64, mime }) => {
   const settings = await settingsStore.getSettings(app)
   const key = settings.providers?.openai?.apiKey

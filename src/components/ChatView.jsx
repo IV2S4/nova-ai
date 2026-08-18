@@ -1,18 +1,22 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Send, Paperclip, Mic, Square, Settings, X, RefreshCw, Pencil, Copy, Check,
-  Volume2, Trash2, Loader2, ChevronDown, ChevronUp, Globe, Search, Sparkles, Image as ImageIcon, FileText, Zap, Download, FileCode2, MessageSquareX
+  Volume2, Trash2, Loader2, ChevronDown, ChevronUp, Globe, Search, Sparkles, Image as ImageIcon, FileText, Zap, Download, FileCode2, MessageSquareX, GitCompareArrows, Bot, FileDown
 } from 'lucide-react'
 import Markdown from './Markdown.jsx'
 import { uid, speak, cancelSpeech, bytesToBase64 } from '../api.js'
 
 const SUGGESTIONS = [
-  'Explícame qué es la inteligencia artificial como si tuviera 10 años',
-  'Escribe un email profesional solicitando un aumento de sueldo',
-  'Ayúdame a depurar este código: (pega tu código)',
-  'Dame 5 ideas de negocios para 2026',
-  'Traduce y mejora este texto: (pega tu texto)',
-  'Crea una rutina de ejercicio semanal para principiantes'
+  { t: 'Explicar conceptos', q: 'Explícame qué es la inteligencia artificial como si tuviera 10 años' },
+  { t: 'Escribir emails', q: 'Escribe un email profesional solicitando un aumento de sueldo' },
+  { t: 'Depurar código', q: 'Ayúdame a depurar este código: (pega tu código)' },
+  { t: 'Ideas de negocio', q: 'Dame 5 ideas de negocios para 2026' },
+  { t: 'Traducir y mejorar', q: 'Traduce y mejora este texto: (pega tu texto)' },
+  { t: 'Rutinas de ejercicio', q: 'Crea una rutina de ejercicio semanal para principiantes' },
+  { t: 'Resumir documentos', q: 'Resume el siguiente texto en 5 puntos clave: (pega tu texto)' },
+  { t: 'Entrevista de trabajo', q: 'Prepárame para una entrevista de trabajo como desarrollador: hazme 10 preguntas difíciles' },
+  { t: 'Plan de estudio', q: 'Crea un plan de estudio de 4 semanas para aprender React desde cero' },
+  { t: 'Historias creativas', q: 'Escribe un cuento corto de ciencia ficción con un asistente de IA como protagonista' }
 ]
 
 function isFreeModel(m, p) {
@@ -94,7 +98,7 @@ function ModelPicker({ providers, providerId, model, onChange, onOpenSettings, o
 }
 
 export default function ChatView({
-  conv, updateConv, providers, runRequest, stopRequest, settings, onOpenSettings, hasAnyProvider, onReloadProviders, notify
+  conv, updateConv, providers, runRequest, stopRequest, settings, onOpenSettings, hasAnyProvider, onReloadProviders, notify, convos, onViewChange
 }) {
   const [input, setInput] = useState('')
   const [attachments, setAttachments] = useState([])
@@ -422,6 +426,115 @@ export default function ChatView({
 
   const escapeHtml = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
+const crcTable = (() => {
+  const t = new Uint32Array(256)
+  for (let n = 0; n < 256; n++) {
+    let c = n
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1
+    t[n] = c >>> 0
+  }
+  return t
+})()
+
+const crc32 = (buf) => {
+  let c = 0xffffffff
+  for (let i = 0; i < buf.length; i++) c = crcTable[(c ^ buf[i]) & 0xff] ^ (c >>> 8)
+  return (c ^ 0xffffffff) >>> 0
+}
+
+function zipStore(files) {
+  const chunks = []
+  const central = []
+  let offset = 0
+  const enc = new TextEncoder()
+  for (const { name, data } of files) {
+    const nameBuf = enc.encode(name)
+    const crc = crc32(data)
+    const head = new Uint8Array(30)
+    const dv = new DataView(head.buffer)
+    dv.setUint32(0, 0x04034b50, true)
+    dv.setUint16(4, 20, true)
+    dv.setUint16(8, 0, true)
+    dv.setUint32(14, crc, true)
+    dv.setUint32(18, data.length, true)
+    dv.setUint32(22, data.length, true)
+    dv.setUint16(26, nameBuf.length, true)
+    chunks.push(head, nameBuf, data)
+    const cen = new Uint8Array(46)
+    const dv2 = new DataView(cen.buffer)
+    dv2.setUint32(0, 0x02014b50, true)
+    dv2.setUint16(4, 20, true)
+    dv2.setUint16(6, 20, true)
+    dv2.setUint32(16, crc, true)
+    dv2.setUint32(20, data.length, true)
+    dv2.setUint32(24, data.length, true)
+    dv2.setUint16(28, nameBuf.length, true)
+    dv2.setUint32(42, offset, true)
+    central.push({ cen, nameBuf })
+    offset += head.length + nameBuf.length + data.length
+  }
+  const cdSize = central.reduce((a, c) => a + c.cen.length + c.nameBuf.length, 0)
+  const end = new Uint8Array(22)
+  const dv3 = new DataView(end.buffer)
+  dv3.setUint32(0, 0x06054b50, true)
+  dv3.setUint16(8, central.length, true)
+  dv3.setUint16(10, central.length, true)
+  dv3.setUint32(12, cdSize, true)
+  dv3.setUint32(16, offset, true)
+  const out = []
+  for (const c of chunks) out.push(c)
+  for (const c of central) { out.push(c.cen); out.push(c.nameBuf) }
+  out.push(end)
+  return new Blob(out, { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' })
+}
+
+const xmlEsc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+
+const exportDocx = async () => {
+  const c = convRef.current
+  const title = c.title || 'Conversación'
+  const paras = [`<w:p><w:pPr><w:pStyle w:val="Title"/></w:pPr><w:r><w:t>${xmlEsc(title)}</w:t></w:r></w:p>`]
+  paras.push(`<w:p><w:r><w:rPr><w:i/><w:color w:val="888888"/></w:rPr><w:t>${xmlEsc(`Exportado desde Nova AI · ${new Date().toLocaleString('es-ES')}`)}</w:t></w:r></w:p>`)
+  for (const m of c.messages) {
+    if (m.role !== 'user' && m.role !== 'assistant') continue
+    const name = m.role === 'user' ? 'Tú' : 'Nova AI'
+    const text = (m.text || '')
+      .split('\n')
+      .map((l) => `<w:p><w:r><w:rPr><w:b/></w:rPr><w:t>${xmlEsc(name + ':')}</w:t></w:r><w:r><w:t xml:space="preserve"> ${xmlEsc(l)}</w:t></w:r></w:p>`)
+      .join('')
+    paras.push(text)
+    if (m.error) paras.push(`<w:p><w:r><w:rPr><w:color w:val="cc4444"/></w:rPr><w:t>${xmlEsc(m.error)}</w:t></w:r></w:p>`)
+  }
+  const documentXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+<w:body>
+${paras.join('\n')}
+<w:sectPr><w:pgSz w:w="11906" w:h="16838"/></w:sectPr>
+</w:body>
+</w:document>`
+  const contentTypes = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+<Default Extension="xml" ContentType="application/xml"/>
+<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+</Types>`
+  const rels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+</Relationships>`
+  const enc = new TextEncoder()
+  const blob = zipStore([
+    { name: '[Content_Types].xml', data: enc.encode(contentTypes) },
+    { name: '_rels/.rels', data: enc.encode(rels) },
+    { name: 'word/document.xml', data: enc.encode(documentXml) }
+  ])
+  const buf = new Uint8Array(await blob.arrayBuffer())
+  let bin = ''
+  for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000))
+  const res = await window.api.exportFile(`Nova AI - ${title}.docx`, [{ name: 'Word', extensions: ['docx'] }], btoa(bin))
+  if (!res?.ok && res?.error) setAttachError(res.error)
+}
+
   const mdToHtml = (text) => {
     const lines = escapeHtml(text || '').split('\n')
     const out = []
@@ -453,8 +566,13 @@ export default function ChatView({
     return out.join('\n')
   }
 
-  const exportHtml = async () => {
+  const exportPdf = async () => {
     const title = convRef.current.title || 'Conversación'
+    const res = await window.api.exportPdf(`Nova AI - ${title}.pdf`, exportHtmlString(title))
+    if (!res?.ok && res?.error) setAttachError(res.error)
+  }
+
+  const exportHtmlString = (title) => {
     const html = `<!DOCTYPE html>
 <html lang="es">
 <head>
@@ -480,6 +598,12 @@ export default function ChatView({
 ${mdToHtml(convoMessagesMd())}
 </body>
 </html>`
+    return html
+  }
+
+  const exportHtml = async () => {
+    const title = convRef.current.title || 'Conversación'
+    const html = exportHtmlString(title)
     const res = await window.api.exportText(`Nova AI - ${title}.html`, html)
     if (!res?.ok && res?.error) setAttachError(res.error)
   }
@@ -529,6 +653,8 @@ ${mdToHtml(convoMessagesMd())}
           <button className="icon-btn" onClick={copyConvo} title="Copiar conversación completa"><Copy size={16} /></button>
           <button className="icon-btn" onClick={exportConvo} title="Exportar a Markdown"><Download size={16} /></button>
           <button className="icon-btn" onClick={exportHtml} title="Exportar a HTML"><FileCode2 size={16} /></button>
+          <button className="icon-btn" onClick={exportPdf} title="Exportar a PDF"><FileText size={16} /></button>
+          <button className="icon-btn" onClick={exportDocx} title="Exportar a Word (.docx)"><FileDown size={16} /></button>
           <button className="icon-btn" onClick={onOpenSettings} title="Ajustes"><Settings size={16} /></button>
         </div>
       </div>
@@ -564,10 +690,19 @@ ${mdToHtml(convoMessagesMd())}
                 ? 'Elige el modelo en la parte superior. Puedes comparar modelos, buscar en web, adjuntar archivos e incluso hablar por micrófono.'
                 : 'Conecta tus IA: ve a Ajustes y pega tus API keys (Claude, GPT, Gemini…), o instala Ollama para usar modelos locales gratis.'}
             </p>
+            <div className="welcome-stats">
+              <div className="stat"><strong>{convos.length}</strong><span>conversaciones</span></div>
+              <div className="stat"><strong>{convos.reduce((a, c) => a + (c.count || 0), 0)}</strong><span>mensajes</span></div>
+              <div className="stat"><strong>{providers.filter((p) => p.hasKey || p.local).length}</strong><span>IA conectadas</span></div>
+            </div>
+            <div className="welcome-actions">
+              <button className="btn primary" onClick={() => onViewChange('compare')}><GitCompareArrows size={15} /> Comparar modelos</button>
+              <button className="btn" onClick={() => onViewChange('agent')}><Bot size={15} /> Agente IA</button>
+            </div>
             <div className="suggestions">
               {SUGGESTIONS.map((s) => (
-                <button key={s} className="suggestion" onClick={() => { setInput(s); inputRef.current?.focus() }}>
-                  <Zap size={13} /> {s}
+                <button key={s.t} className="suggestion" title={s.q} onClick={() => { setInput(s.q); inputRef.current?.focus() }}>
+                  <Zap size={13} /> {s.t}
                 </button>
               ))}
             </div>

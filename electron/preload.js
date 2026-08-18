@@ -17,6 +17,8 @@ contextBridge.exposeInMainWorld('api', {
   webSearch: (q) => ipcRenderer.invoke('websearch:query', q),
   extractFile: (file) => ipcRenderer.invoke('file:extract', webUtils.getPathForFile(file)),
   exportText: (defaultName, content) => ipcRenderer.invoke('export:text', { defaultName, content }),
+  exportFile: (defaultName, filters, base64) => ipcRenderer.invoke('export:file', { defaultName, filters, base64 }),
+  exportPdf: (defaultName, html) => ipcRenderer.invoke('export:pdf', { defaultName, html }),
   transcribe: (payload) => ipcRenderer.invoke('stt:transcribe', payload),
   onChatEvent: (cb) => {
     const listener = (_e, ev) => cb(ev)
