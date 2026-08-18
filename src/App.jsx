@@ -63,6 +63,7 @@ export default function App() {
       const h = streamsRef.current.get(ev.id)
       if (!h) return
       if (ev.type === 'chunk') h.onDelta(ev.text)
+      else if (ev.type === 'image') h.onImage?.(ev)
       else if (ev.type === 'done') {
         streamsRef.current.delete(ev.id)
         h.onDone()

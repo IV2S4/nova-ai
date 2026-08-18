@@ -590,6 +590,47 @@ body {
   text-transform: uppercase; letter-spacing: 0.04em; white-space: nowrap;
 }
 
+.img-tag {
+  margin-left: 6px; font-size: 9.5px; font-weight: 600; color: #e879f9;
+  border: 1px solid #e879f9; border-radius: 20px; padding: 0 6px;
+  text-transform: uppercase; letter-spacing: 0.04em; white-space: nowrap;
+}
+
+.img-controls {
+  display: flex; gap: 8px; align-items: center; padding: 4px 2px 8px;
+  flex-wrap: wrap;
+}
+.img-edit-toggle { margin: 0; font-size: 12px; color: var(--muted); }
+.img-seg {
+  display: flex; gap: 3px; background: var(--panel3);
+  border: 1px solid var(--border); border-radius: 9px; padding: 3px;
+}
+.seg-btn {
+  border: none; background: transparent; color: var(--muted);
+  font-size: 11.5px; font-weight: 600; padding: 4px 10px; border-radius: 6px;
+  cursor: pointer;
+}
+.seg-btn:hover { color: var(--text); }
+.seg-btn.active { background: var(--accent); color: #fff; }
+
+.gen-hint {
+  display: inline-flex; align-items: center; gap: 6px;
+  color: var(--muted); font-size: 12.5px;
+}
+.msg-images.gen { margin-top: 10px; }
+.gen-img { position: relative; }
+.gen-img img { max-width: 260px; max-height: 220px; display: block; }
+.gen-img-actions {
+  position: absolute; top: 6px; right: 6px; display: flex; gap: 4px;
+  background: rgba(0, 0, 0, 0.55); border-radius: 8px; padding: 3px;
+  opacity: 0; transition: opacity 0.15s;
+}
+.gen-img:hover .gen-img-actions { opacity: 1; }
+.gen-img-actions .icon-btn { color: #fff; }
+.gen-img-actions .icon-btn:hover { background: rgba(255, 255, 255, 0.2); }
+.img-hint { color: #e879f9; }
+.send-label { margin-left: 6px; font-weight: 600; }
+
 /* ---------- Tema claro ---------- */
 
 [data-theme="light"] {

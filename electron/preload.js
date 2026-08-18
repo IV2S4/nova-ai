@@ -19,6 +19,7 @@ contextBridge.exposeInMainWorld('api', {
   exportText: (defaultName, content) => ipcRenderer.invoke('export:text', { defaultName, content }),
   exportFile: (defaultName, filters, base64) => ipcRenderer.invoke('export:file', { defaultName, filters, base64 }),
   exportPdf: (defaultName, html) => ipcRenderer.invoke('export:pdf', { defaultName, html }),
+  saveImageFile: (defaultName, base64, mime) => ipcRenderer.invoke('image:save', { defaultName, base64, mime }),
   transcribe: (payload) => ipcRenderer.invoke('stt:transcribe', payload),
   onChatEvent: (cb) => {
     const listener = (_e, ev) => cb(ev)

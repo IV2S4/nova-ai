@@ -150,6 +150,7 @@ export default function CompareView({ providers, runRequest, stopRequest, onOpen
                     </div>
                     <div className="popover-models">
                       {p.models.slice(0, 30).map((m) => {
+                        if (p.imageModels?.includes(m)) return null
                         const active = selected.some((s) => s.provider === p.id && s.model === m)
                         const locked = !p.local && !p.hasKey
                         return (

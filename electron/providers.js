@@ -11,14 +11,16 @@ const PROVIDER_DEFS = [
     keyPath: 'providers.openai.apiKey', keyName: 'OPENAI_API_KEY',
     vision: ['*'],
     reasoning: ['o3', 'o3-mini'],
-    models: ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5', 'gpt-5.5-pro', 'gpt-5.4', 'gpt-5.4-pro', 'gpt-5.4-mini', 'gpt-5.4-nano', 'gpt-5', 'gpt-4.1', 'gpt-4.1-mini', 'gpt-4.1-nano', 'gpt-4o', 'gpt-4o-mini', 'o3', 'o3-mini'],
+    imageModels: ['gpt-image-2', 'gpt-image-1', 'dall-e-3'],
+    models: ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5', 'gpt-5.5-pro', 'gpt-5.4', 'gpt-5.4-pro', 'gpt-5.4-mini', 'gpt-5.4-nano', 'gpt-5', 'gpt-4.1', 'gpt-4.1-mini', 'gpt-4.1-nano', 'gpt-4o', 'gpt-4o-mini', 'o3', 'o3-mini', 'gpt-image-2', 'gpt-image-1', 'dall-e-3'],
     docs: 'https://platform.openai.com/api-keys'
   },
   {
     id: 'google', name: 'Google Gemini', color: '#4285f4',
     keyPath: 'providers.google.apiKey', keyName: 'GEMINI_API_KEY',
     vision: ['*'],
-    models: ['gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-3.5-flash-lite', 'gemini-3-flash-preview', 'gemini-2.5-flash'],
+    imageModels: ['gemini-3.1-flash-image', 'gemini-3.1-flash-lite-image', 'gemini-3-pro-image', 'gemini-2.5-flash-image'],
+    models: ['gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-3.5-flash-lite', 'gemini-3-flash-preview', 'gemini-2.5-flash', 'gemini-3.1-flash-image', 'gemini-3.1-flash-lite-image', 'gemini-3-pro-image', 'gemini-2.5-flash-image'],
     docs: 'https://aistudio.google.com/apikey'
   },
   {
@@ -125,7 +127,8 @@ async function getProviderList(settings) {
     list.push({
       id: p.id, name: p.name, color: p.color, vision: p.vision,
       hasKey: p.local ? true : !!c.apiKey,
-      models, live: p.live, local: p.local, docs: p.docs
+      models, live: p.live, local: p.local, docs: p.docs,
+      imageModels: p.imageModels || []
     })
   }
   return list
@@ -253,6 +256,10 @@ function normalizeMessages(def, model, system, messages, images) {
   return msgs
 }
 
+function isImageModel(def, model) {
+  return Array.isArray(def.imageModels) && def.imageModels.includes(model)
+}
+
 async function* streamChat(settings, req, signal) {
   const def = PROVIDER_DEFS.find((p) => p.id === req.provider)
   if (!def) throw new Error('Proveedor desconocido')
@@ -261,7 +268,12 @@ async function* streamChat(settings, req, signal) {
   const sys = buildSystem(req.system, req.searchContext)
   const msgs = normalizeMessages(def, req.model, sys, req.messages, images)
 
-  if (def.id === 'anthropic') yield* streamAnthropic(cfg, req, msgs, signal)
+  if (isImageModel(def, req.model)) {
+    const raw = req.messages.map((m) => ({ role: m.role, content: m.text || '', images: m.images || [] }))
+    if (images.length) raw[raw.length - 1] = { ...raw[raw.length - 1], images: [...(raw[raw.length - 1].images || []), ...images] }
+    const imgMsgs = req.system ? [{ role: 'system', content: sys }, ...raw] : raw
+    yield* streamImage(cfg, def, req, imgMsgs, signal)
+  } else if (def.id === 'anthropic') yield* streamAnthropic(cfg, req, msgs, signal)
   else if (def.id === 'google') yield* streamGoogle(cfg, req, msgs, signal)
   else if (def.id === 'ollama') yield* streamOllama(cfg, req, msgs, signal)
   else yield* streamOpenAICompat(cfg, def, req, msgs, signal)
@@ -471,6 +483,121 @@ async function* streamOpenAICompat(cfg, def, req, msgs, signal) {
   yield { type: 'done' }
 }
 
+function imageFormatToParams(format) {
+  return format === 'wide'
+    ? { openai: '1536x1024', dallE: '1792x1024', ratio: '16:9' }
+    : format === 'tall'
+      ? { openai: '1024x1536', dallE: '1024x1792', ratio: '9:16' }
+      : { openai: '1024x1024', dallE: '1024x1024', ratio: '1:1' }
+}
+
+async function* streamImage(cfg, def, req, msgs, signal) {
+  if (def.id === 'google') yield* streamGeminiImage(cfg, req, msgs, signal)
+  else if (def.id === 'openai') yield* streamOpenAIImage(cfg, req, signal)
+  else throw new Error('Este modelo no soporta generación de imágenes')
+}
+
+async function* streamGeminiImage(cfg, req, msgs, signal) {
+  if (!cfg.apiKey) throw new Error('Falta la API key de Google Gemini. Configúrala en Ajustes.')
+  const contents = []
+  for (const m of msgs.filter((x) => x.role !== 'system')) {
+    const parts = []
+    if (m.images) {
+      for (const img of m.images) parts.push({ inline_data: { mime_type: img.mime, data: img.data } })
+    }
+    parts.push({ text: m.content || '' })
+    if (contents.length && contents[contents.length - 1].role === m.role) {
+      contents[contents.length - 1].parts.push(...parts)
+    } else {
+      contents.push({ role: m.role === 'assistant' ? 'model' : 'user', parts })
+    }
+  }
+  if (req.contextImage && contents.length && contents[contents.length - 1].role === 'user') {
+    contents[contents.length - 1].parts.unshift({ inline_data: { mime_type: req.contextImage.mime, data: req.contextImage.data } })
+  }
+  const ratio = imageFormatToParams(req.imageFormat || 'square').ratio
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(req.model)}:streamGenerateContent?alt=sse&key=${encodeURIComponent(cfg.apiKey)}`
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      contents,
+      generationConfig: {
+        responseModalities: ['TEXT', 'IMAGE'],
+        imageConfig: { aspectRatio: ratio }
+      }
+    }),
+    signal
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.error?.message || `Error HTTP ${res.status}`)
+  }
+  let n = 0
+  let gotImage = false
+  for await (const { json } of readSSE(res)) {
+    if (json.error) throw new Error(json.error.message || 'Error de Gemini')
+    const parts = json.candidates?.[0]?.content?.parts || []
+    for (const p of parts) {
+      if (p.thought) continue
+      if (p.text) yield { type: 'chunk', text: p.text }
+      if (p.inlineData) {
+        gotImage = true
+        const mime = p.inlineData.mimeType || 'image/png'
+        const ext = mime.split('/')[1] === 'jpeg' ? 'jpg' : (mime.split('/')[1] || 'png')
+        yield { type: 'image', name: `imagen-${++n}.${ext}`, mime, data: p.inlineData.data }
+      }
+    }
+  }
+  if (!gotImage) throw new Error('El modelo no devolvió ninguna imagen. Revisa el prompt.')
+  yield { type: 'done' }
+}
+
+async function* streamOpenAIImage(cfg, req, signal) {
+  if (!cfg.apiKey) throw new Error('Falta la API key de OpenAI. Configúrala en Ajustes.')
+  const base = cfg.base || 'https://api.openai.com/v1'
+  const prompt = [...(req.messages || [])].reverse().find((m) => m.text)?.text || ''
+  if (!prompt) throw new Error('Escribe una descripción para generar la imagen')
+  const params = imageFormatToParams(req.imageFormat || 'square')
+  const isDalle = /^dall-e/.test(req.model)
+  const size = isDalle ? params.dallE : params.openai
+  const quality = isDalle ? 'standard' : (req.imageQuality || 'high')
+  const input = req.images?.[0] || req.contextImage
+  const payload = {
+    model: req.model,
+    prompt,
+    size,
+    quality,
+    output_format: 'png',
+    ...(input ? {} : { n: Math.min(4, Math.max(1, req.imageCount || 1)) })
+  }
+  const path = input ? 'images/edits' : 'images/generations'
+  const res = await fetch(`${base}/${path}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', Authorization: `Bearer ${cfg.apiKey}` },
+    body: JSON.stringify(input ? { ...payload, image: input.data } : payload),
+    signal
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.error?.message || `Error HTTP ${res.status}`)
+  }
+  const data = await res.json()
+  const items = data.data || []
+  if (!items.length) throw new Error('El modelo no devolvió ninguna imagen')
+  let n = 0
+  for (const it of items) {
+    if (it.b64_json) {
+      yield { type: 'image', name: `imagen-${++n}.png`, mime: 'image/png', data: it.b64_json }
+    } else if (it.url) {
+      const img = await fetch(it.url, { signal: AbortSignal.timeout(60000) })
+      const buf = Buffer.from(await img.arrayBuffer())
+      yield { type: 'image', name: `imagen-${++n}.png`, mime: 'image/png', data: buf.toString('base64') }
+    }
+  }
+  yield { type: 'done' }
+}
+
 async function* readSSE(res) {
   const reader = res.body.getReader()
   const dec = new TextDecoder()
@@ -492,6 +619,8 @@ async function* readSSE(res) {
 }
 
 async function generateTitle(settings, req) {
+  const def = PROVIDER_DEFS.find((p) => p.id === req?.provider)
+  if (!def || isImageModel(def, req.model)) return null
   const text = (req?.text || '').replace(/\s+/g, ' ').trim().slice(0, 400)
   if (!text) return null
   try {

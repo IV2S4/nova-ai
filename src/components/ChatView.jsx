@@ -37,6 +37,7 @@ function ModelPicker({ providers, providerId, model, onChange, onOpenSettings, o
         <span className="provider-dot" style={{ background: prov?.color || '#888' }} />
         <span className="model-btn-name">{prov?.name}</span>
         <strong>{model}</strong>
+        {prov?.imageModels?.includes(model) && <span className="img-tag">🎨 imagen</span>}
         <ChevronDown size={14} />
       </button>
       {open && (
@@ -59,6 +60,7 @@ function ModelPicker({ providers, providerId, model, onChange, onOpenSettings, o
                   >
                     {m}
                     {isFreeModel(m, p) && <span className="free-tag">gratis</span>}
+                    {p.imageModels?.includes(m) && <span className="img-tag">🎨 imagen</span>}
                   </button>
                 ))}
                 {p.models.length === 0 && (
@@ -127,6 +129,7 @@ export default function ChatView({
   const searchInputRef = useRef(null)
   const pendingIdRef = useRef(null)
   const fullTextRef = useRef('')
+  const imagesRef = useRef([])
   const flushTimerRef = useRef(null)
   const stickRef = useRef(true)
   const dragDepthRef = useRef(0)
@@ -135,6 +138,9 @@ export default function ChatView({
   convRef.current = conv
 
   const tokenCount = useMemo(() => conv.messages.reduce((n, m) => n + Math.round((m.text || '').length / 4), 0), [conv.messages])
+
+  const curProvider = providers.find((p) => p.id === conv.provider)
+  const imageModel = !!curProvider?.imageModels?.includes(conv.model)
 
   const onScroll = () => {
     const el = scrollRef.current
@@ -175,7 +181,7 @@ export default function ChatView({
       flushTimerRef.current = null
       updateConv((c) => ({
         ...c,
-        messages: c.messages.map((m) => (m.id === assistantId ? { ...m, text: fullTextRef.current } : m))
+        messages: c.messages.map((m) => (m.id === assistantId ? { ...m, text: fullTextRef.current, images: imagesRef.current.length ? imagesRef.current : m.images } : m))
       }))
     }, 80)
   }
@@ -185,7 +191,7 @@ export default function ChatView({
     flushTimerRef.current = null
     updateConv((c) => ({
       ...c,
-      messages: c.messages.map((m) => (m.id === assistantId ? { ...m, text: fullTextRef.current, streaming: false, ...extra } : m))
+      messages: c.messages.map((m) => (m.id === assistantId ? { ...m, text: fullTextRef.current, images: imagesRef.current.length ? imagesRef.current : m.images, streaming: false, ...extra } : m))
     }))
   }
 
@@ -240,7 +246,7 @@ export default function ChatView({
     const assistantId = uid()
 
     let searchContext = null
-    if (webSearch && text) {
+    if (webSearch && text && !imageModel) {
       setSearching(true)
       try {
         const res = await window.api.webSearch(text)
@@ -251,6 +257,12 @@ export default function ChatView({
       } finally {
         setSearching(false)
       }
+    }
+
+    let contextImage = null
+    if (imageModel && !images.length && convRef.current.imgEditLast !== false) {
+      const lastGen = [...baseMsgs].reverse().find((m) => m.images?.length)
+      if (lastGen) contextImage = { mime: lastGen.images[0].mime, data: lastGen.images[0].data }
     }
 
     const baseMsgs = base ?? convRef.current.messages
@@ -265,6 +277,7 @@ export default function ChatView({
     }
     pendingIdRef.current = assistantId
     fullTextRef.current = ''
+    imagesRef.current = []
     stickRef.current = true
     updateConv(newConv)
     setInput('')
@@ -280,11 +293,17 @@ export default function ChatView({
         temperature: convRef.current.temperature ?? 0.7,
         messages: msgs,
         images: userMsg.images,
-        searchContext
+        searchContext,
+        ...(imageModel ? { imageFormat: convRef.current.imgFormat || 'square', imageCount: convRef.current.imgCount || 1 } : {}),
+        ...(contextImage ? { contextImage } : {})
       },
       {
         onDelta: (t) => {
           fullTextRef.current += t
+          flushStream(assistantId)
+        },
+        onImage: (img) => {
+          imagesRef.current.push({ name: img.name, mime: img.mime, data: img.data })
           flushStream(assistantId)
         },
         onDone: () => {
@@ -312,6 +331,8 @@ export default function ChatView({
     const c = convRef.current
     if (settings?.autoTitles === false) return
     if (c.title && c.title !== 'Nueva conversación') return
+    const prov = providers.find((p) => p.id === c.provider)
+    if (prov?.imageModels?.includes(c.model)) return
     const lastUser = [...c.messages].reverse().find((m) => m.role === 'user')
     const userText = lastUser?.text || ''
     if (userText.trim().length < 8) return
@@ -762,7 +783,7 @@ ${mdToHtml(convoMessagesMd())}
                 <div className="assistant-body">
                   {m.search && <div className="search-note"><Search size={12} /> Esta respuesta incluye búsqueda web</div>}
                   <div className="md">
-                    {m.text ? <Markdown text={m.text} /> : <span className="cursor-blink" />}
+                    {m.text ? <Markdown text={m.text} /> : m.streaming ? <span className="gen-hint"><Loader2 size={13} className="spin" /> Generando imagen…</span> : <span className="cursor-blink" />}
                     {m.streaming && m.text && <span className="cursor-blink" />}
                     {m.error && (
                       <div className="error-box retry-box">
@@ -773,6 +794,21 @@ ${mdToHtml(convoMessagesMd())}
                       </div>
                     )}
                   </div>
+                  {m.images?.length > 0 && (
+                    <div className="msg-images gen">
+                      {m.images.map((img, i) => (
+                        <div key={i} className="gen-img">
+                          <img src={`data:${img.mime};base64,${img.data}`} alt={img.name} title={img.name} />
+                          {!m.streaming && (
+                            <div className="gen-img-actions">
+                              <button className="icon-btn" title="Descargar imagen" onClick={() => window.api.saveImageFile(img.name, img.data, img.mime)}><Download size={13} /></button>
+                              <button className="icon-btn" title="Editar esta imagen en el chat" onClick={() => setAttachments([{ id: uid(), name: img.name, kind: 'image', mime: img.mime, data: img.data }])}><Pencil size={13} /></button>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                   {!m.streaming && (
                     <div className="msg-actions">
                       <button className="icon-btn" title="Copiar" onClick={() => copyText(m)}>{copiedId === m.id ? <Check size={13} /> : <Copy size={13} />}</button>
@@ -829,6 +865,46 @@ ${mdToHtml(convoMessagesMd())}
           </div>
         )}
 
+        {imageModel && (
+          <div className="img-controls">
+            <div className="img-seg">
+              {[
+                { id: 'square', label: 'Cuadrado' },
+                { id: 'wide', label: 'Ancho' },
+                { id: 'tall', label: 'Alto' }
+              ].map((f) => (
+                <button
+                  key={f.id}
+                  className={`seg-btn ${(conv.imgFormat || 'square') === f.id ? 'active' : ''}`}
+                  onClick={() => updateConv({ ...conv, imgFormat: f.id })}
+                  title="Formato de la imagen"
+                >
+                  {f.label}
+                </button>
+              ))}
+            </div>
+            {conv.provider === 'openai' && (
+              <div className="img-seg" title="Cantidad de imágenes">
+                {[1, 2, 3, 4].map((n) => (
+                  <button
+                    key={n}
+                    className={`seg-btn ${(conv.imgCount || 1) === n ? 'active' : ''}`}
+                    onClick={() => updateConv({ ...conv, imgCount: n })}
+                  >
+                    ×{n}
+                  </button>
+                ))}
+              </div>
+            )}
+            {conv.messages.some((m) => m.images?.length) && (
+              <label className="row-check img-edit-toggle" title="Si está activo, un mensaje nuevo sin foto adjunta edita la última imagen generada">
+                <input type="checkbox" checked={conv.imgEditLast !== false} onChange={(e) => updateConv({ ...conv, imgEditLast: e.target.checked })} />
+                <Pencil size={13} /> Editar la anterior
+              </label>
+            )}
+          </div>
+        )}
+
         {attachments.length > 0 && (
           <div className="attachments">
             {attachments.map((a) => (
@@ -848,13 +924,15 @@ ${mdToHtml(convoMessagesMd())}
         {attachError && <div className="error-box small">{attachError}</div>}
 
         <div className="input-bar">
-          <button className={`icon-btn ${webSearch ? 'on' : ''}`} onClick={() => setWebSearch(!webSearch)} title="Buscar en web">
-            <Globe size={17} />
-          </button>
+          {!imageModel && (
+            <button className={`icon-btn ${webSearch ? 'on' : ''}`} onClick={() => setWebSearch(!webSearch)} title="Buscar en web">
+              <Globe size={17} />
+            </button>
+          )}
           <button className={`icon-btn ${showOptions ? 'on' : ''}`} onClick={() => setShowOptions(!showOptions)} title="Opciones">
             <ChevronDown size={17} />
           </button>
-          <button className="icon-btn" onClick={() => fileRef.current?.click()} title="Adjuntar archivo o imagen">
+          <button className="icon-btn" onClick={() => fileRef.current?.click()} title={imageModel ? 'Adjuntar una foto para editarla' : 'Adjuntar archivo o imagen'}>
             <Paperclip size={17} />
           </button>
           <input ref={fileRef} type="file" multiple hidden onChange={(e) => { onFiles([...e.target.files]); e.target.value = '' }} />
@@ -862,7 +940,7 @@ ${mdToHtml(convoMessagesMd())}
             ref={inputRef}
             className="input"
             value={input}
-            placeholder={searching ? 'Buscando en web…' : 'Escribe tu mensaje… (Enter para enviar, Shift+Enter para salto de línea)'}
+            placeholder={searching ? 'Buscando en web…' : imageModel ? 'Describe la imagen (o adjunta una foto para editarla)…' : 'Escribe tu mensaje… (Enter para enviar, Shift+Enter para salto de línea)'}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
@@ -893,12 +971,14 @@ ${mdToHtml(convoMessagesMd())}
           >
             {recState === 'idle' ? <Mic size={17} /> : recState === 'recording' ? <Square size={17} /> : <Loader2 size={17} className="spin" />}
           </button>
-          <button className="btn primary send-btn" onClick={() => send()} disabled={sending || preparing || (!input.trim() && !attachments.length)} title="Enviar">
-            {sending || preparing ? <Loader2 size={16} className="spin" /> : <Send size={16} />}
+          <button className="btn primary send-btn" onClick={() => send()} disabled={sending || preparing || (!input.trim() && !attachments.length)} title={imageModel ? 'Generar imagen' : 'Enviar'}>
+            {sending || preparing ? <Loader2 size={16} className="spin" /> : imageModel ? <Sparkles size={16} /> : <Send size={16} />}
+            {imageModel && !sending && !preparing && <span className="send-label">Generar</span>}
           </button>
         </div>
         <div className="input-foot">
           <span className="hint">
+            {imageModel && !searchFailed && <span className="img-hint">🎨 Este modelo genera y edita imágenes en el chat: escribe una descripción o adjunta una foto y pide cambios.</span>}
             {searchFailed && <span className="search-fail">No se encontraron resultados web; respondo sin búsqueda.</span>}
             {recState === 'recording' && <span className="rec-hint">● Grabando… pulsa de nuevo para detener</span>}
           </span>

@@ -1,5 +1,14 @@
 module.exports = {
   entries: {
+    '1.9.0': [
+      '🎨 GENERADOR DE IMÁGENES EN EL CHAT (como ChatGPT y Gemini): selecciona un modelo de imagen (GPT-Image 2/1, DALL·E 3, o Nano Banana de Gemini: gemini-3.1-flash-image, gemini-3.1-flash-lite-image, gemini-3-pro-image) y pídele lo que quieras',
+      'Genera fotos desde texto: describe la escena y Nova dibuja la imagen directamente en la conversación',
+      'EDITA y transforma tus fotos: adjunta una imagen y pide cambios ("cámbiale el fondo", "ponle gafas de sol"…) o deja activado "Editar la anterior" para seguir retocando la última imagen generada en el chat',
+      'Controles de imagen: formato Cuadrado / Ancho / Alto y cantidad (1 a 4 imágenes) con GPT-Image',
+      'Cada imagen generada tiene botones: DESCARGAR y EDITAR (la adjunta al chat para retocarla)',
+      'El historial de conversación guarda las imágenes: puedes volver a un chat antiguo y seguir editando tus creaciones',
+      'El comparador y el agente omiten los modelos de imagen (son exclusivos del chat)'
+    ],
     '1.8.1': [
       'AGENTE ARREGLADO: las sesiones del agente ya se guardan y aparecen en el historial (antes se perdían al terminar la tarea)',
       'Detener el agente ahora guarda la sesión parcial con su estado para poder retomarla',

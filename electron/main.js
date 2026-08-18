@@ -460,6 +460,23 @@ ipcMain.handle('export:file', async (e, { defaultName, filters, base64 }) => {
   }
 })
 
+ipcMain.handle('image:save', async (e, { defaultName, base64, mime }) => {
+  try {
+    const win = BrowserWindow.fromWebContents(e.sender)
+    const ext = (mime || 'image/png').split('/')[1] === 'jpeg' ? 'jpg' : ((mime || 'image/png').split('/')[1] || 'png')
+    const { canceled, filePath } = await dialog.showSaveDialog(win, {
+      title: 'Guardar imagen',
+      defaultPath: defaultName,
+      filters: [{ name: 'Imagen', extensions: [ext] }]
+    })
+    if (canceled || !filePath) return { ok: false }
+    fs.writeFileSync(filePath, Buffer.from(base64, 'base64'))
+    return { ok: true, filePath }
+  } catch (err) {
+    return { ok: false, error: err.message }
+  }
+})
+
 ipcMain.handle('export:pdf', async (e, { defaultName, html }) => {
   const win = BrowserWindow.fromWebContents(e.sender)
   const pdfWin = new BrowserWindow({ show: false, webPreferences: { offscreen: true, sandbox: true } })

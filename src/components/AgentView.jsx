@@ -376,7 +376,7 @@ export default function AgentView({ providers, settings, onOpenSettings }) {
               ))}
             </select>
             <select className="agent-select" value={model} onChange={(e) => setModel(e.target.value)} title="Modelo del agente">
-              {(current?.models || []).map((m) => <option key={m} value={m}>{m}{current?.local || current?.id === 'groq' || (current?.id === 'mistral' && /^(mistral-small|ministral)/.test(m)) || /^gemini-[0-9].*flash/i.test(m) || /:free$/i.test(m) ? ' (gratis)' : ''}</option>)}
+              {(current?.models || []).filter((m) => !current?.imageModels?.includes(m)).map((m) => <option key={m} value={m}>{m}{current?.local || current?.id === 'groq' || (current?.id === 'mistral' && /^(mistral-small|ministral)/.test(m)) || /^gemini-[0-9].*flash/i.test(m) || /:free$/i.test(m) ? ' (gratis)' : ''}</option>)}
             </select>
             {busy && (
               <button className="btn danger" onClick={stop}><Square size={13} /> Detener</button>
