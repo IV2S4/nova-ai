@@ -1,10 +1,19 @@
 {
   "name": "nova-ai",
   "productName": "Nova AI",
-  "version": "1.8.0",
+  "version": "1.8.1",
   "description": "Nova AI - Tu asistente de IA todo-en-uno: Claude, GPT, Gemini, Ollama, OpenRouter y mas",
   "main": "electron/main.js",
   "license": "MIT",
+  "author": {
+    "name": "IV2S4",
+    "email": "iv2s4@users.noreply.github.com"
+  },
+  "homepage": "https://github.com/IV2S4/nova-ai",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/IV2S4/nova-ai.git"
+  },
   "scripts": {
     "dev": "concurrently -k \"vite\" \"wait-on tcp:127.0.0.1:5173 && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
     "build": "vite build",
@@ -36,6 +45,7 @@
   "build": {
     "appId": "com.nova.ai",
     "productName": "Nova AI",
+    "compression": "maximum",
     "files": [
       "electron/**/*",
       "dist/**/*",
@@ -49,7 +59,13 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "shortcutName": "Nova AI"
+      "shortcutName": "Nova AI",
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false,
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico",
+      "artifactName": "Nova AI Setup ${version}.${ext}"
     }
   }
 }

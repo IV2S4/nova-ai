@@ -442,17 +442,21 @@ async function* streamOpenAICompat(cfg, def, req, msgs, signal) {
   let res = await trySend(buildBody(msgs))
 
   let firstError = null
+  let emitted = false
   try {
     for await (const { json, done } of readSSE(res)) {
       if (done) break
       const delta = json.choices?.[0]?.delta || {}
       const text = delta.content || delta.reasoning_content || ''
-      if (text) yield { type: 'chunk', text }
+      if (text) {
+        emitted = true
+        yield { type: 'chunk', text }
+      }
     }
   } catch (e) {
     firstError = e
   }
-  if (firstError && /image|vision/i.test(firstError.message)) {
+  if (firstError && !emitted && /image|vision/i.test(firstError.message)) {
     const ms = msgs.map((m) => ({ ...m, images: undefined }))
     res = await trySend(buildBody(ms))
     for await (const { json, done } of readSSE(res)) {

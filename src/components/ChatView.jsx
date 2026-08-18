@@ -98,7 +98,7 @@ function ModelPicker({ providers, providerId, model, onChange, onOpenSettings, o
 }
 
 export default function ChatView({
-  conv, updateConv, providers, runRequest, stopRequest, settings, onOpenSettings, hasAnyProvider, onReloadProviders, notify, convos, onViewChange
+  conv, updateConv, providers, runRequest, stopRequest, settings, onOpenSettings, onSaveSettings, hasAnyProvider, onReloadProviders, notify, convos, onViewChange
 }) {
   const [input, setInput] = useState('')
   const [attachments, setAttachments] = useState([])
@@ -242,10 +242,15 @@ export default function ChatView({
     let searchContext = null
     if (webSearch && text) {
       setSearching(true)
-      const res = await window.api.webSearch(text)
-      setSearching(false)
-      if (res) searchContext = res
-      else setSearchFailed(true)
+      try {
+        const res = await window.api.webSearch(text)
+        if (res) searchContext = res
+        else setSearchFailed(true)
+      } catch {
+        setSearchFailed(true)
+      } finally {
+        setSearching(false)
+      }
     }
 
     const baseMsgs = base ?? convRef.current.messages
@@ -809,7 +814,10 @@ ${mdToHtml(convoMessagesMd())}
               <span>{conv.temperature ?? 0.7}</span>
             </div>
             <label className="row-check">
-              <input type="checkbox" checked={settings?.voice?.enabled || false} onChange={(e) => window.api.saveSettings({ voice: { ...(settings?.voice || {}), enabled: e.target.checked } })} />
+              <input type="checkbox" checked={settings?.voice?.enabled || false} onChange={async (e) => {
+                const s = await window.api.saveSettings({ voice: { ...(settings?.voice || {}), enabled: e.target.checked } })
+                onSaveSettings?.(s)
+              }} />
               <Volume2 size={14} /> Responder en voz
             </label>
             <textarea

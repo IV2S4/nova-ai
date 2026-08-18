@@ -57,7 +57,9 @@ app.whenReady().then(() => {
     if (!r?.ok || !r.updateAvailable) return
     const settings = await settingsStore.getSettings(app)
     if (settings.lastIgnoredVersion === r.latest) return
-    win.webContents.send('update:info', { latest: r.latest, url: r.url, notes: r.notes })
+    if (!win.isDestroyed() && !win.webContents.isDestroyed()) {
+      win.webContents.send('update:info', { latest: r.latest, url: r.url, notes: r.notes })
+    }
   })
 
   app.on('activate', () => {
@@ -459,16 +461,15 @@ ipcMain.handle('export:file', async (e, { defaultName, filters, base64 }) => {
 })
 
 ipcMain.handle('export:pdf', async (e, { defaultName, html }) => {
+  const win = BrowserWindow.fromWebContents(e.sender)
+  const pdfWin = new BrowserWindow({ show: false, webPreferences: { offscreen: true, sandbox: true } })
   try {
-    const win = BrowserWindow.fromWebContents(e.sender)
-    const pdfWin = new BrowserWindow({ show: false, webPreferences: { offscreen: true, sandbox: true } })
     await pdfWin.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html))
     const pdf = await pdfWin.webContents.printToPDF({
       pageSize: 'A4',
       printBackground: true,
       margins: { top: 0.5, bottom: 0.5, left: 0.5, right: 0.5 }
     })
-    pdfWin.destroy()
     const { canceled, filePath } = await dialog.showSaveDialog(win, {
       title: 'Guardar PDF',
       defaultPath: defaultName,
@@ -479,6 +480,8 @@ ipcMain.handle('export:pdf', async (e, { defaultName, html }) => {
     return { ok: true, filePath }
   } catch (err) {
     return { ok: false, error: err.message }
+  } finally {
+    if (!pdfWin.isDestroyed()) pdfWin.destroy()
   }
 })
 

@@ -1,5 +1,17 @@
 module.exports = {
   entries: {
+    '1.8.1': [
+      'AGENTE ARREGLADO: las sesiones del agente ya se guardan y aparecen en el historial (antes se perdían al terminar la tarea)',
+      'Detener el agente ahora guarda la sesión parcial con su estado para poder retomarla',
+      'La búsqueda web del agente usa tu clave de Tavily de Ajustes (antes no llegaba a usarla)',
+      'Arreglado un fallo que mezclaba los resultados de comandos entre herramientas del agente (estado compartido)',
+      'No puedes cambiar de pestaña (Chat/Comparador/Agente) mientras una IA está respondiendo: avisa para que la detengas primero',
+      'El checkbox "Responder en voz" de la barra del chat ahora se marca/desmarca al instante',
+      'La búsqueda web del chat ya no se queda "buscando" si el proveedor falla: muestra el aviso correcto',
+      'El guardado de conversaciones ya no puede romper la app si el disco falla (errores capturados)',
+      'Botones "Probar" y "Arrancar servidor" de Ajustes con errores controlados (nunca se quedan cargando para siempre)',
+      'Comandos del agente: el temporizador de 120 s se limpia bien al detener y no se reportan errores dobles'
+    ],
     '1.8.0': [
       'CARPETAS de conversaciones: organiza tus chats por temas (botón de carpeta en cada conversación, "Nueva carpeta…" y quitar carpeta)',
       'Pantalla inicial renovada: estadísticas (conversaciones, mensajes, IA conectadas), accesos directos a Comparador y Agente, y 10 plantillas de mensajes con un clic',

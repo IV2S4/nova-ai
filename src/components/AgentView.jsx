@@ -154,17 +154,17 @@ export default function AgentView({ providers, settings, onOpenSettings }) {
       } else if (ev.type === 'done') {
         setBusy(false)
         setDone(true)
-        saveSession()
+        saveSession({ done: true, error: '' })
       } else if (ev.type === 'error') {
         setBusy(false)
         setError(ev.message)
-        saveSession()
+        saveSession({ done: false, error: ev.message })
       }
     })
     return () => unsub?.()
   }, [])
 
-  const saveSession = () => {
+  const saveSession = (extra = {}) => {
     const meta = metaRef.current
     if (!meta) return
     const c = {
@@ -178,8 +178,8 @@ export default function AgentView({ providers, settings, onOpenSettings }) {
       workspace: meta.workspace,
       text: contentRef.current.text,
       tools: contentRef.current.tools,
-      error,
-      done
+      error: extra.error ?? error,
+      done: extra.done ?? done
     }
     window.api?.saveAgentHistory(c)
     refreshSessions()
@@ -211,7 +211,7 @@ export default function AgentView({ providers, settings, onOpenSettings }) {
     setTools([])
     setDone(false)
     setLoaded(null)
-    const id = uid()
+    const id = 'agent:' + uid()
     sessionRef.current = id
     const ctx = loaded ? buildContext(loaded) : undefined
     metaRef.current = { id, prompt, provider: providerId, model, createdAt: Date.now(), workspace }
@@ -230,6 +230,7 @@ export default function AgentView({ providers, settings, onOpenSettings }) {
   const stop = () => {
     if (sessionRef.current) window.api?.stopAgent(sessionRef.current)
     setBusy(false)
+    saveSession({ done: false, error: 'Detenido por el usuario' })
   }
 
   const changeProvider = (id) => {

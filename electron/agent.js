@@ -161,12 +161,16 @@ function runCommandStream(cwd, command, toolId, signal) {
     runningProcs.set(toolId, child)
     let out = ''
     let killedByUser = false
+    let settled = false
     const push = (chunk) => {
       out = (out + chunk).slice(-MAX_OUTPUT * 2)
       chunks.push(chunk)
     }
     const chunks = []
     const done = (ok, error) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
       if (runningProcs.get(toolId) === child) runningProcs.delete(toolId)
       resolve({ ok, error, output: out.slice(0, MAX_OUTPUT), chunks })
     }
@@ -181,11 +185,9 @@ function runCommandStream(cwd, command, toolId, signal) {
       done(false, 'Detenido por el usuario')
     }, { once: true })
     child.on('error', (err) => {
-      clearTimeout(timer)
       done(false, String(err.message || err).slice(0, 1200))
     })
     child.on('close', (code) => {
-      clearTimeout(timer)
       const aborted = signal?.aborted
       if (aborted) done(false, 'Detenido por el usuario')
       else if (code === null) done(false, 'Proceso terminado sin código de salida')
@@ -194,7 +196,7 @@ function runCommandStream(cwd, command, toolId, signal) {
   })
 }
 
-async function* runToolStream(name, args, workspace, toolId, signal) {
+async function* runToolStream(name, args, workspace, toolId, signal, settings) {
   try {
     switch (name) {
       case 'run_command': {
@@ -251,7 +253,7 @@ async function* runToolStream(name, args, workspace, toolId, signal) {
         return
       }
       case 'web_search': {
-        const res = await websearch.search({ tavily: {} }, String(args.query || ''))
+        const res = await websearch.search(settings || { tavily: {} }, String(args.query || ''))
         yield { type: 'result', result: { ok: true, output: res ? res.slice(0, MAX_OUTPUT) : 'Sin resultados' } }
         return
       }
@@ -327,7 +329,7 @@ function anthropicTools() {
   }))
 }
 
-async function* runAgentOpenAI(cfg, def, msgs, signal, workspace) {
+async function* runAgentOpenAI(cfg, def, msgs, signal, workspace, settings, state) {
   const base = cfg.base || def.base || 'https://api.openai.com/v1'
   const isNewGen = /^(gpt-5|o3)/.test(msgs._model || '')
   for (let i = 0; i < MAX_ITERS; i++) {
@@ -361,27 +363,25 @@ async function* runAgentOpenAI(cfg, def, msgs, signal, workspace) {
       let args = {}
       try { args = JSON.parse(tc.arguments || '{}') } catch { }
       yield { type: 'tool', id: tc.id, name: tc.name, args }
-      yield* execTool(tc.name, args, tc.id, signal, workspace)
-      msgs.messages.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify({ ok: lastTool?.ok, output: lastTool?.output || '', error: lastTool?.error || '' }) })
+      yield* execTool(tc.name, args, tc.id, signal, workspace, settings, state)
+      msgs.messages.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify({ ok: state.lastTool?.ok, output: state.lastTool?.output || '', error: state.lastTool?.error || '' }) })
     }
   }
   throw new Error('Demasiados pasos de agente (límite alcanzado). Detén la tarea y simplifícala.')
 }
 
-let lastTool = null
-
-async function* execTool(name, args, toolId, signal, workspace) {
-  lastTool = null
-  for await (const ev of runToolStream(name, args, workspace, toolId, signal)) {
+async function* execTool(name, args, toolId, signal, workspace, settings, state) {
+  state.lastTool = null
+  for await (const ev of runToolStream(name, args, workspace, toolId, signal, settings)) {
     if (ev.type === 'chunk') yield { type: 'tool_output', id: toolId, chunk: ev.text }
     else if (ev.type === 'result') {
-      lastTool = ev.result
+      state.lastTool = ev.result
       yield { type: 'tool_result', id: toolId, name, ok: ev.result.ok, output: ev.result.output || '', error: ev.result.error || '' }
     }
   }
 }
 
-async function* runAgentAnthropic(cfg, msgs, signal, workspace) {
+async function* runAgentAnthropic(cfg, msgs, signal, workspace, settings, state) {
   const system = msgs.messages.filter((m) => m.role === 'system').map((m) => m.content).join('\n')
   const conv = msgs.messages.filter((m) => m.role !== 'system').map((m) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content }))
   for (let i = 0; i < MAX_ITERS; i++) {
@@ -420,8 +420,8 @@ async function* runAgentAnthropic(cfg, msgs, signal, workspace) {
     })
     for (const t of parsed) {
       yield { type: 'tool', id: t.id, name: t.name, args: t.input }
-      yield* execTool(t.name, t.input, t.id, signal, workspace)
-      conv.push({ role: 'user', content: [{ type: 'tool_result', tool_use_id: t.id, content: JSON.stringify({ ok: lastTool?.ok, output: lastTool?.output || '', error: lastTool?.error || '' }) }] })
+      yield* execTool(t.name, t.input, t.id, signal, workspace, settings, state)
+      conv.push({ role: 'user', content: [{ type: 'tool_result', tool_use_id: t.id, content: JSON.stringify({ ok: state.lastTool?.ok, output: state.lastTool?.output || '', error: state.lastTool?.error || '' }) }] })
     }
   }
   throw new Error('Demasiados pasos de agente (límite alcanzado). Detén la tarea y simplifícala.')
@@ -476,7 +476,7 @@ async function collectGeminiDelta(res) {
   return { text, calls }
 }
 
-async function* runAgentGemini(cfg, msgs, signal, workspace) {
+async function* runAgentGemini(cfg, msgs, signal, workspace, settings, state) {
   for (let i = 0; i < MAX_ITERS; i++) {
     const { system, contents } = msgsToGemini(msgs.messages)
     const body = {
@@ -505,8 +505,8 @@ async function* runAgentGemini(cfg, msgs, signal, workspace) {
     for (const c of calls) {
       const id = `gem_${i}_${n++}`
       yield { type: 'tool', id, name: c.name, args: c.args }
-      yield* execTool(c.name, c.args, id, signal, workspace)
-      msgs.messages.push({ role: 'tool', name: c.name, ok: lastTool?.ok, output: lastTool?.output || '', error: lastTool?.error || '' })
+      yield* execTool(c.name, c.args, id, signal, workspace, settings, state)
+      msgs.messages.push({ role: 'tool', name: c.name, ok: state.lastTool?.ok, output: state.lastTool?.output || '', error: state.lastTool?.error || '' })
     }
   }
   throw new Error('Demasiados pasos de agente (límite alcanzado). Detén la tarea y simplifícala.')
@@ -532,9 +532,10 @@ async function* runAgent(settings, req, signal) {
       { role: 'user', content: req.prompt }
     ]
   }
-  if (def.id === 'anthropic') yield* runAgentAnthropic(cfg, msgs, signal, req.workspace)
-  else if (def.id === 'google') yield* runAgentGemini(cfg, msgs, signal, req.workspace)
-  else yield* runAgentOpenAI(cfg, def, msgs, signal, req.workspace)
+  const state = { lastTool: null }
+  if (def.id === 'anthropic') yield* runAgentAnthropic(cfg, msgs, signal, req.workspace, settings, state)
+  else if (def.id === 'google') yield* runAgentGemini(cfg, msgs, signal, req.workspace, settings, state)
+  else yield* runAgentOpenAI(cfg, def, msgs, signal, req.workspace, settings, state)
 }
 
 function buildSystemPrompt(prompt, enabledIds, context) {

@@ -33,6 +33,16 @@ export default function CompareView({ providers, runRequest, stopRequest, onOpen
     timersRef.current = {}
   }
 
+  const flush = (id) => {
+    clearTimeout(timersRef.current[id])
+    timersRef.current[id] = null
+    const t = pendingRef.current[id]
+    if (t) {
+      pendingRef.current[id] = ''
+      setResults((r) => ({ ...r, [id]: { ...r[id], text: (r[id]?.text || '') + t } }))
+    }
+  }
+
   const compare = async () => {
     if (!prompt.trim() || !selected.length || running) return
     setRunning(true)
@@ -121,9 +131,9 @@ export default function CompareView({ providers, runRequest, stopRequest, onOpen
 
       <div className="compare-select">
         <div className="compare-chips">
-          {selected.map((s) => (
-            <button key={s.key} className="chip" style={{ borderColor: s.color }} onClick={() => toggleModel({ id: s.provider, color: s.color }, s.model)}>
-              <span className="provider-dot" style={{ background: s.color }} /> {s.model} <X size={12} />
+          {selected.map((sel) => (
+            <button key={sel.key} className="chip" style={{ borderColor: sel.color }} onClick={() => setSelected((prev) => prev.filter((x) => x.key !== sel.key))}>
+              <span className="provider-dot" style={{ background: sel.color }} /> {sel.model} <X size={12} />
             </button>
           ))}
           <div className="picker-wrap">
@@ -182,7 +192,7 @@ export default function CompareView({ providers, runRequest, stopRequest, onOpen
           <div key={r.id} className="compare-col">
             <div className="compare-col-head" style={{ borderColor: r.color }}>
               <span className="provider-dot" style={{ background: r.color }} />
-              <strong>{r.model}</strong>
+              <strong>{r.label}</strong>
               {r.status === 'running' && <Loader2 size={13} className="spin" />}
               {r.status === 'done' && <span className="ok-ms">{((r.ms || 0) / 1000).toFixed(1)}s</span>}
               {r.status === 'running' && <button className="icon-btn" onClick={() => stopOne(r.id)} title="Detener"><X size={13} /></button>}

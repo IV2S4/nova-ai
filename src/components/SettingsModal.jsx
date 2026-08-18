@@ -46,8 +46,12 @@ export default function SettingsModal({ open, onClose, providers, settings, onSa
 
   const runTest = async (id) => {
     setTests((t) => ({ ...t, [id]: { loading: true } }))
-    const r = await testProvider(id)
-    setTests((t) => ({ ...t, [id]: r }))
+    try {
+      const r = await testProvider(id)
+      setTests((t) => ({ ...t, [id]: r }))
+    } catch (e) {
+      setTests((t) => ({ ...t, [id]: { ok: false, error: e.message || 'Error de prueba' } }))
+    }
   }
 
   const checkUpdates = async () => {
@@ -64,8 +68,12 @@ export default function SettingsModal({ open, onClose, providers, settings, onSa
 
   const startLocal = async (id) => {
     setTests((t) => ({ ...t, [id]: { loading: true } }))
-    const r = await window.api.startLocalServer(id)
-    setTests((t) => ({ ...t, [id]: r }))
+    try {
+      const r = await window.api.startLocalServer(id)
+      setTests((t) => ({ ...t, [id]: r }))
+    } catch (e) {
+      setTests((t) => ({ ...t, [id]: { ok: false, error: e.message || 'Error al arrancar el servidor' } }))
+    }
   }
 
   return (

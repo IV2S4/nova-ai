@@ -14,8 +14,14 @@ function readAll(app) {
 }
 
 function writeAll(app, list) {
-  fs.mkdirSync(path.dirname(filePath(app)), { recursive: true })
-  fs.writeFileSync(filePath(app), JSON.stringify(list, null, 2))
+  try {
+    fs.mkdirSync(path.dirname(filePath(app)), { recursive: true })
+    fs.writeFileSync(filePath(app), JSON.stringify(list, null, 2))
+    return true
+  } catch (e) {
+    console.error('Error guardando conversaciones:', e)
+    return false
+  }
 }
 
 async function list(app) {

@@ -127,6 +127,14 @@ export default function App() {
 
   const busy = () => streamsRef.current.size > 0
 
+  const changeView = (v) => {
+    if (busy() && v !== view) {
+      notify('Detén la respuesta en curso para cambiar de vista')
+      return
+    }
+    setView(v)
+  }
+
   const newChat = () => {
     if (busy()) { notify('Detén la respuesta en curso para abrir un chat nuevo'); return }
     createLocal(convos, providers)
@@ -305,7 +313,7 @@ export default function App() {
         onTogglePin={togglePin}
         onSetFolder={setFolder}
         onRemoveFolder={removeFolder}
-        onViewChange={setView}
+        onViewChange={changeView}
         onOpenSettings={() => setSettingsOpen(true)}
         providers={providers}
         configuredCount={configuredCount}
@@ -321,11 +329,12 @@ export default function App() {
             stopRequest={stopRequest}
             settings={settings}
             onOpenSettings={() => setSettingsOpen(true)}
+            onSaveSettings={onSavedSettings}
             hasAnyProvider={configuredCount > 0}
             onReloadProviders={refreshProviders}
             notify={notify}
             convos={convos}
-            onViewChange={setView}
+            onViewChange={changeView}
           />
         ) : view === 'agent' ? (
           <AgentView
