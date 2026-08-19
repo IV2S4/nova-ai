@@ -133,18 +133,23 @@ function mcpServerId(id) {
   return String(id || '').replace(/[^a-zA-Z0-9_-]/g, '-')
 }
 
-function mcpTools(settings) {
+async function mcpTools(settings) {
   const servers = settings?.mcp?.servers || []
   const out = []
   for (const s of servers) {
     if (!s.enabled || !s.command) continue
     const sid = mcpServerId(s.id || s.name)
-    const cached = mcpToolCache.get(sid)
-    const tools = cached || []
-    if (!cached) {
-      mcp.listTools(sid, s).then((ts) => {
-        mcpToolCache.set(sid, ts)
-      }).catch(() => {})
+    let tools = mcpToolCache.get(sid)
+    if (!tools) {
+      try {
+        tools = await Promise.race([
+          mcp.listTools(sid, s),
+          new Promise((_, rej) => setTimeout(() => rej(new Error('timeout MCP')), 15000))
+        ])
+        mcpToolCache.set(sid, tools)
+      } catch {
+        tools = []
+      }
     }
     for (const t of tools) {
       out.push({
@@ -162,8 +167,8 @@ function mcpTools(settings) {
 
 const mcpToolCache = new Map()
 
-function buildTools(settings) {
-  return [...TOOLS, ...mcpTools(settings)]
+async function buildTools(settings) {
+  return [...TOOLS, ...(await mcpTools(settings))]
 }
 
 async function execMcpTool(fullName, args, settings) {
@@ -438,11 +443,11 @@ async function* streamAnthropicDelta(res, acc) {
 }
 
 function anthropicTools(settings) {
-  return buildTools(settings).map((t) => ({
+  return buildTools(settings).then((all) => all.map((t) => ({
     name: t.function.name,
     description: t.function.description,
     input_schema: t.function.parameters
-  }))
+  })))
 }
 
 async function* runAgentOpenAI(cfg, def, msgs, signal, workspace, settings, state) {
@@ -452,7 +457,7 @@ async function* runAgentOpenAI(cfg, def, msgs, signal, workspace, settings, stat
     const body = {
       model: msgs._model,
       messages: msgs.messages,
-      tools: buildTools(settings),
+      tools: await buildTools(settings),
       stream: true,
       ...(isNewGen ? { max_completion_tokens: 8192 } : { max_tokens: 8192 })
     }
@@ -515,7 +520,7 @@ async function* runAgentAnthropic(cfg, msgs, signal, workspace, settings, state)
         max_tokens: 8192,
         system: system || undefined,
         messages: conv,
-        tools: anthropicTools(settings),
+        tools: await anthropicTools(settings),
         stream: true
       }),
       signal: AbortSignal.any([signal, AbortSignal.timeout(300000)])
@@ -555,8 +560,8 @@ async function* runAgentAnthropic(cfg, msgs, signal, workspace, settings, state)
 }
 
 function geminiTools(settings) {
-  return [{
-    functionDeclarations: buildTools(settings).map((t) => ({
+  return buildTools(settings).then((all) => [{
+    functionDeclarations: all.map((t) => ({
       name: t.function.name,
       description: t.function.description,
       parameters: {
@@ -565,7 +570,7 @@ function geminiTools(settings) {
         required: (t.function.parameters || {}).required || []
       }
     }))
-  }]
+  }])
 }
 
 function msgsToGemini(messages) {
@@ -617,7 +622,7 @@ async function* runAgentGemini(cfg, msgs, signal, workspace, settings, state) {
     const body = {
       contents,
       systemInstruction: system ? { parts: [{ text: system }] } : undefined,
-      tools: geminiTools(settings),
+      tools: await geminiTools(settings),
       generationConfig: { maxOutputTokens: 8192 }
     }
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(msgs._model)}:streamGenerateContent?alt=sse&key=${encodeURIComponent(cfg.apiKey)}`
