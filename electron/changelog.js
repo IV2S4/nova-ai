@@ -1,5 +1,11 @@
 module.exports = {
   entries: {
+    '2.2.3': [
+      '🔧 ARREGLADO: los builds ya no salen incompletos. Si el modelo se queda sin tokens a mitad de la página, el agente ahora lo detecta y continúa automáticamente hasta terminar el archivo (hasta 6 continuaciones), en vez de guardar el HTML a medias',
+      '🔧 ARREGLADO: el agente ya sabe editar la página después. Antes al leer un archivo grande solo veía la primera mitad y sus cambios fallaban; ahora read_file lee el archivo por fragmentos (offset/length) y le avisa al modelo que lea TODO el archivo antes de editar',
+      '⬆️ Límite de salida del agente subido a 16.384 tokens (ajustable en Ajustes > Rendimiento)',
+      '🧹 Salidas de herramientas muy largas (p. ej. leer un HTML grande) ya no inundan el chat: salen recortadas con botón "Ver más"'
+    ],
     '2.2.2': [
       '🤫 EL AGENTE YA NO TE ESCUPE EL CÓDIGO ENTERO: cuando crea una página web o edita archivos, el código completo va dentro del archivo (herramienta write_file/edit_file) y en el chat solo verás el resumen del build y el botón "Vista previa" para verlo',
       '📄 Bloques de código muy largos en el chat ahora salen colapsados con un botón "Ver código completo" — el chat queda limpio y el código no te ocupa toda la pantalla',

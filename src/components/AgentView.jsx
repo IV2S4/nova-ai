@@ -147,6 +147,25 @@ function DiffView({ diff, onHunkToggle, appliedHunks, readOnly }) {
   )
 }
 
+function ToolOutput({ text, live }) {
+  const [showAll, setShowAll] = useState(text.length <= 8000)
+  const big = text.length > 8000
+  return (
+    <>
+      {live || showAll ? (
+        <pre className={`tool-output ${live ? 'live' : ''}`}>{text}</pre>
+      ) : (
+        <pre className="tool-output">{text.slice(0, 4000)}…</pre>
+      )}
+      {big && (
+        <button className="tool-output-more" onClick={() => setShowAll((s) => !s)}>
+          {showAll ? i18n.t('agent.showLess') : i18n.t('agent.showMore', { chars: text.length })}
+        </button>
+      )}
+    </>
+  )
+}
+
 function ProposalCard({ p, busy, onApplySelected, onApplyAll }) {
   const [appliedHunks, setAppliedHunks] = useState(() => p.appliedHunks || [])
   const handleHunkToggle = (hi) => {
@@ -1322,7 +1341,7 @@ export default function AgentView({ providers, settings, onOpenSettings }) {
                   )}
                 </div>
                 {t.output && (
-                  <pre className={`tool-output ${t.status === 'running' ? 'live' : ''}`}>{t.output}</pre>
+                  <ToolOutput text={t.output} live={t.status === 'running'} />
                 )}
                 {t.error && <div className="tool-error">{t.error}</div>}
               </div>

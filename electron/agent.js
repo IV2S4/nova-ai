@@ -11,6 +11,8 @@ const { chunkText, scoreChunk } = require('./projects')
 
 const MAX_ITERS = 25
 const MAX_OUTPUT = 30000
+const MAX_CONTINUE = 6
+const CONTINUE_MSG = '[CONTINUACIÓN AUTOMÁTICA: tu respuesta anterior se cortó por el límite de tokens. Continúa EXACTAMENTE desde el último carácter escrito, sin repetir nada de lo ya emitido, y completa lo que estabas haciendo.]'
 
 const TOOLS = [
   {
@@ -394,8 +396,17 @@ async function* runToolStream(name, args, workspace, toolId, signal, settings, s
         const p = safeResolve(workspace, args.path)
         const stat = fs.statSync(p)
         if (!stat.isFile()) throw new Error('No es un archivo')
-        if (stat.size > 1.5 * 1024 * 1024) throw new Error('Archivo demasiado grande para leerlo entero')
-        yield { type: 'result', result: { ok: true, output: fs.readFileSync(p, 'utf8').slice(0, MAX_OUTPUT) } }
+        if (stat.size > 2 * 1024 * 1024) throw new Error('Archivo demasiado grande para leerlo entero')
+        const text = fs.readFileSync(p, 'utf8')
+        const offset = Math.max(0, parseInt(args.offset, 10) || 0)
+        const length = Math.max(0, parseInt(args.length, 10) || 0)
+        const chunk = length ? text.slice(offset, offset + length) : text.slice(offset, offset + MAX_OUTPUT)
+        const total = text.length
+        const next = offset + chunk.length
+        const note = total > chunk.length
+          ? `[El archivo tiene ${total} caracteres. Este fragmento muestra del carácter ${offset} al ${next}.${next < total ? ` Usa read_file con offset=${next} para leer el siguiente fragmento (y length=30000).` : ''} Lee TODO el archivo antes de editarlo.]\n`
+          : ''
+        yield { type: 'result', result: { ok: true, output: note + chunk } }
         return
       }
       case 'list_files': {
@@ -582,6 +593,8 @@ async function* streamOpenAIDelta(res, acc) {
   let content = ''
   for await (const { json, done } of readSSE(res)) {
     if (done) return content
+    const fr = json.choices?.[0]?.finish_reason
+    if (fr) acc.finished = acc.finished || fr === 'length'
     const delta = json.choices?.[0]?.delta || {}
     if (delta.reasoning_content) yield { type: 'thinking', text: delta.reasoning_content }
     if (delta.content) {
@@ -603,7 +616,9 @@ async function* streamAnthropicDelta(res, acc) {
   let content = ''
   for await (const { json, done } of readSSE(res)) {
     if (done) return content
-    if (json.type === 'content_block_start' && json.content_block?.type === 'tool_use') {
+    if (json.type === 'message_delta' && json.delta?.stop_reason) {
+      acc.finished = acc.finished || json.delta.stop_reason === 'max_tokens'
+    } else if (json.type === 'content_block_start' && json.content_block?.type === 'tool_use') {
       acc.tools[json.index] = { id: json.content_block.id, name: json.content_block.name, input: '' }
     } else if (json.type === 'content_block_delta') {
       if (json.delta?.type === 'text_delta') {
@@ -633,7 +648,8 @@ function anthropicTools(settings) {
 async function* runAgentOpenAI(cfg, def, msgs, signal, workspace, settings, state) {
   const base = cfg.base || def.base || 'https://api.openai.com/v1'
   const isNewGen = /^(gpt-5|o3)/.test(msgs._model || '')
-  const maxTokens = msgs._maxTokens || 8192
+  const maxTokens = msgs._maxTokens || 16384
+  let cont = 0
   for (let i = 0; i < MAX_ITERS; i++) {
     const body = {
       model: msgs._model,
@@ -653,14 +669,22 @@ async function* runAgentOpenAI(cfg, def, msgs, signal, workspace, settings, stat
       const err = await res.json().catch(() => ({}))
       throw new Error(err.error?.message || `Error HTTP ${res.status}`)
     }
-    const acc = { toolCalls: [] }
+    const acc = { toolCalls: [], finished: false }
     let content = ''
     for await (const ev of streamOpenAIDelta(res, acc)) {
       if (ev.type === 'thinking') yield { type: 'thinking', text: ev.text }
       else { content += ev.text; yield { type: 'text', text: ev.text } }
     }
     const toolCalls = acc.toolCalls
-    if (!toolCalls.length) { yield { type: 'done' }; return }
+    if (!toolCalls.length) {
+      if (acc.finished && cont < MAX_CONTINUE) {
+        msgs.messages.push({ role: 'assistant', content: content || null })
+        msgs.messages.push({ role: 'user', content: CONTINUE_MSG })
+        cont++
+        continue
+      }
+      yield { type: 'done' }; return
+    }
 
     msgs.messages.push({
       role: 'assistant',
@@ -739,7 +763,8 @@ async function runSubagent(state, task, ctx, depth) {
 async function* runAgentAnthropic(cfg, msgs, signal, workspace, settings, state) {
   const system = msgs.messages.filter((m) => m.role === 'system').map((m) => m.content).join('\n')
   const conv = msgs.messages.filter((m) => m.role !== 'system').map((m) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content }))
-  const maxTokens = msgs._maxTokens || 8192
+  const maxTokens = msgs._maxTokens || 16384
+  let cont = 0
   for (let i = 0; i < MAX_ITERS; i++) {
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -759,14 +784,22 @@ async function* runAgentAnthropic(cfg, msgs, signal, workspace, settings, state)
       const err = await res.json().catch(() => ({}))
       throw new Error(err.error?.message || `Error HTTP ${res.status}`)
     }
-    const acc = { tools: [] }
+    const acc = { tools: [], finished: false }
     let content = ''
     for await (const ev of streamAnthropicDelta(res, acc)) {
       if (ev.type === 'thinking') yield { type: 'thinking', text: ev.text }
       else { content += ev.text; yield { type: 'text', text: ev.text } }
     }
     const tools = acc.tools
-    if (!tools.length) { yield { type: 'done' }; return }
+    if (!tools.length) {
+      if (acc.finished && cont < MAX_CONTINUE) {
+        conv.push({ role: 'assistant', content: content ? [{ type: 'text', text: content }] : [] })
+        conv.push({ role: 'user', content: CONTINUE_MSG })
+        cont++
+        continue
+      }
+      yield { type: 'done' }; return
+    }
 
     const parsed = tools.map((t) => {
       let input = {}
@@ -830,6 +863,8 @@ async function* streamGeminiDelta(res, acc) {
   let text = ''
   for await (const { json, done } of readSSE(res)) {
     if (done) return text
+    const fr = json?.candidates?.[0]?.finishReason
+    if (fr) acc.finished = acc.finished || fr === 'MAX_TOKENS'
     const parts = json?.candidates?.[0]?.content?.parts || []
     for (const p of parts) {
       if (p.thought) yield { type: 'thinking', text: p.text || '' }
@@ -847,13 +882,14 @@ async function* streamGeminiDelta(res, acc) {
 }
 
 async function* runAgentGemini(cfg, msgs, signal, workspace, settings, state) {
+  let cont = 0
   for (let i = 0; i < MAX_ITERS; i++) {
     const { system, contents } = msgsToGemini(msgs.messages)
     const body = {
       contents,
       systemInstruction: system ? { parts: [{ text: system }] } : undefined,
       ...(msgs._noTools ? {} : { tools: await geminiTools(settings) }),
-      generationConfig: { maxOutputTokens: msgs._maxTokens || 8192, ...(msgs._temperature != null ? { temperature: msgs._temperature } : {}) }
+      generationConfig: { maxOutputTokens: msgs._maxTokens || 16384, ...(msgs._temperature != null ? { temperature: msgs._temperature } : {}) }
     }
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(msgs._model)}:streamGenerateContent?alt=sse&key=${encodeURIComponent(cfg.apiKey)}`
     const res = await fetch(url, {
@@ -866,14 +902,22 @@ async function* runAgentGemini(cfg, msgs, signal, workspace, settings, state) {
       const err = await res.json().catch(() => ({}))
       throw new Error(err?.error?.message || `Error HTTP ${res.status}`)
     }
-    const acc = { calls: [] }
+    const acc = { calls: [], finished: false }
     let text = ''
     for await (const ev of streamGeminiDelta(res, acc)) {
       if (ev.type === 'thinking') yield { type: 'thinking', text: ev.text }
       else { text += ev.text; yield { type: 'text', text: ev.text } }
     }
     const calls = acc.calls
-    if (!calls.length) { yield { type: 'done' }; return }
+    if (!calls.length) {
+      if (acc.finished && cont < MAX_CONTINUE) {
+        msgs.messages.push({ role: 'assistant', content: text || '' })
+        msgs.messages.push({ role: 'user', content: CONTINUE_MSG })
+        cont++
+        continue
+      }
+      yield { type: 'done' }; return
+    }
 
     msgs.messages.push({ role: 'assistant', content: text || '', functionCalls: calls })
     let n = 0

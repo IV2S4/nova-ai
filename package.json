@@ -1,7 +1,7 @@
 {
   "name": "nova-ai",
   "productName": "Nova AI",
-  "version": "2.2.2",
+  "version": "2.2.3",
   "description": "Nova AI - Tu asistente de IA todo-en-uno: Claude, GPT, Gemini, Ollama, OpenRouter y mas",
   "main": "electron/main.js",
   "license": "MIT",
