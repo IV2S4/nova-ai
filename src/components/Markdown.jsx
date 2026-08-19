@@ -8,6 +8,7 @@ import { Check, Copy } from 'lucide-react'
 
 function CodeBlock({ lang, code }) {
   const [copied, setCopied] = useState(false)
+  const [expanded, setExpanded] = useState(() => code.split('\n').length <= 120)
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(code)
@@ -19,11 +20,18 @@ function CodeBlock({ lang, code }) {
     <div className="codeblock">
       <div className="codeblock-head">
         <span>{lang}</span>
-        <button className="icon-btn small" onClick={copy} title="Copiar">
-          {copied ? <Check size={13} /> : <Copy size={13} />} {copied ? 'Copiado' : 'Copiar'}
-        </button>
+        <div className="codeblock-actions">
+          {!expanded && (
+            <button className="icon-btn small" onClick={() => setExpanded(true)} title="Ver código completo">
+              Ver código completo ({code.split('\n').length} líneas)
+            </button>
+          )}
+          <button className="icon-btn small" onClick={copy} title="Copiar">
+            {copied ? <Check size={13} /> : <Copy size={13} />} {copied ? 'Copiado' : 'Copiar'}
+          </button>
+        </div>
       </div>
-      <pre><code>{code}</code></pre>
+      <pre className={expanded ? '' : 'collapsed'}><code>{code}</code></pre>
     </div>
   )
 }

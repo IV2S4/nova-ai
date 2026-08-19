@@ -1262,3 +1262,8 @@ body {
 .preview-foot { display: flex; align-items: center; gap: 8px; padding: 12px 14px 14px; flex-shrink: 0; }
 .preview-foot .btn { margin: 0; }
 .preview-foot .ed-ok { margin-right: auto; background: none !important; border: none !important; }
+
+.codeblock-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.codeblock-actions { display: flex; align-items: center; gap: 6px; }
+.codeblock pre.collapsed { max-height: 240px; overflow: hidden; position: relative; }
+.codeblock pre.collapsed::after { content: ''; position: absolute; inset: auto 0 0 0; height: 60px; background: linear-gradient(transparent, #0a0d13); pointer-events: none; }

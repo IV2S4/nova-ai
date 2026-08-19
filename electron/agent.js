@@ -189,7 +189,8 @@ Reglas de trabajo:
 - Si necesitas información reciente usa web_search.
 - Los comandos se ejecutan en la carpeta del proyecto; no borres archivos del usuario.
 - Responde en el idioma del usuario, sé conciso y explica las decisiones importantes.
-- Cuando termines la tarea, resume qué hiciste y qué comandos ejecutaste.`
+- Cuando termines la tarea, resume qué hiciste y qué comandos ejecutaste.
+- REGLA DE ORO: el código completo de un archivo va SIEMPRE dentro de write_file/edit_file, nunca en tu respuesta de texto. No repitas el contenido del archivo en el mensaje final: limítate a decir qué archivo creaste o modificaste (ruta), qué hace y cómo verlo o probarlo (p. ej. "usa el botón Vista previa para ver la página"). Si el usuario te pide explícitamente que le muestres el código en el chat, entonces sí puedes pegarlo.`
 
 function safeResolve(workspace, rel) {
   const base = path.resolve(workspace)

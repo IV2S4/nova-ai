@@ -1,5 +1,10 @@
 module.exports = {
   entries: {
+    '2.2.2': [
+      '🤫 EL AGENTE YA NO TE ESCUPE EL CÓDIGO ENTERO: cuando crea una página web o edita archivos, el código completo va dentro del archivo (herramienta write_file/edit_file) y en el chat solo verás el resumen del build y el botón "Vista previa" para verlo',
+      '📄 Bloques de código muy largos en el chat ahora salen colapsados con un botón "Ver código completo" — el chat queda limpio y el código no te ocupa toda la pantalla',
+      'Si le pides expresamente que te muestre el código en el chat, lo sigue mostrando'
+    ],
     '2.2.1': [
       '🌐 VISTA PREVIA DE PÁGINAS WEB: cuando el agente crea o edita un archivo HTML aparece el botón "Vista previa" junto a la herramienta — se abre un visor con la página renderizada en vivo',
       '📝 EDITAR Y DESCARGAR: dentro de la vista previa puedes cambiar a la pestaña "Código", editar el HTML y ver el resultado al instante, guardarlo en el proyecto o descargarlo como archivo .html',
