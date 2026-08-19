@@ -19,6 +19,9 @@ export default function App() {
   const [appInfo, setAppInfo] = useState({ version: '', entries: {} })
   const [ready, setReady] = useState(false)
   const [toast, setToast] = useState(null)
+  const [paletteOpen, setPaletteOpen] = useState(false)
+  const [paletteQ, setPaletteQ] = useState('')
+  const [paletteIdx, setPaletteIdx] = useState(0)
   const streamsRef = useRef(new Map())
   const convRef = useRef(null)
   const saveTimer = useRef(null)
@@ -64,6 +67,7 @@ export default function App() {
       if (!h) return
       if (ev.type === 'chunk') h.onDelta(ev.text)
       else if (ev.type === 'image') h.onImage?.(ev)
+      else if (ev.type === 'reasoning') h.onReasoning?.(ev)
       else if (ev.type === 'done') {
         streamsRef.current.delete(ev.id)
         h.onDone()
@@ -98,10 +102,15 @@ export default function App() {
     const onKey = (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 'n') { e.preventDefault(); newChatRef.current() }
       if ((e.ctrlKey || e.metaKey) && e.key === ',') { e.preventDefault(); setSettingsOpen(true) }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault()
+        if (!settingsOpen && !showChangelog) setPaletteOpen((o) => !o)
+      }
+      if (e.key === 'Escape' && paletteOpen) setPaletteOpen(false)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [])
+  }, [settingsOpen, showChangelog, paletteOpen])
 
   const makeConv = (p) => {
     const def = p.find((x) => x.hasKey)
@@ -371,6 +380,89 @@ export default function App() {
         currentVersion={appInfo.version}
       />
       {toast && <div className="toast" key={toast.id}>{toast.msg}</div>}
+      {paletteOpen && (
+        <Palette
+          convos={convos}
+          activeId={activeId}
+          query={paletteQ}
+          setQuery={setPaletteQ}
+          idx={paletteIdx}
+          setIdx={setPaletteIdx}
+          onClose={() => { setPaletteOpen(false); setPaletteQ('') }}
+          onNewChat={() => { newChat(); setPaletteOpen(false); setPaletteQ('') }}
+          onView={(v) => { changeView(v); setPaletteOpen(false); setPaletteQ('') }}
+          onOpenSettings={() => { setSettingsOpen(true); setPaletteOpen(false); setPaletteQ('') }}
+          onChangelog={() => { setShowChangelog(true); setPaletteOpen(false); setPaletteQ('') }}
+          onSelectConvo={async (id) => { await selectConvo(id); setPaletteOpen(false); setPaletteQ('') }}
+          onExport={() => {
+            window.dispatchEvent(new CustomEvent('nova:export'))
+            setPaletteOpen(false)
+            setPaletteQ('')
+          }}
+        />
+      )}
+    </div>
+  )
+}
+
+function Palette({ convos, activeId, query, setQuery, idx, setIdx, onClose, onNewChat, onView, onOpenSettings, onChangelog, onSelectConvo, onExport }) {
+  const inputRef = useRef(null)
+  const listRef = useRef(null)
+  useEffect(() => inputRef.current?.focus(), [])
+  useEffect(() => {
+    if (listRef.current?.children[idx]) listRef.current.children[idx].scrollIntoView({ block: 'nearest' })
+  }, [idx])
+
+  const commands = [
+    { id: 'new', label: 'Nueva conversación', hint: 'Ctrl+N', run: onNewChat },
+    { id: 'chat', label: 'Ir al chat', hint: '', run: () => onView('chat') },
+    { id: 'compare', label: 'Comparador de modelos', hint: '', run: () => onView('compare') },
+    { id: 'agent', label: 'Agente de código', hint: '', run: () => onView('agent') },
+    { id: 'export', label: 'Exportar conversación', hint: 'MD', run: onExport },
+    { id: 'settings', label: 'Ajustes', hint: 'Ctrl+,', run: onOpenSettings },
+    { id: 'changelog', label: 'Ver novedades', hint: '', run: onChangelog }
+  ]
+  const q = query.trim().toLowerCase()
+  const found = commands.filter((c) => c.label.toLowerCase().includes(q) || (c.hint || '').toLowerCase().includes(q))
+  const foundConvos = convos
+    .filter((c) => c.id !== activeId && c.title.toLowerCase().includes(q))
+    .slice(0, 6)
+  const items = [
+    ...found.map((c) => ({ kind: 'cmd', ...c })),
+    ...foundConvos.map((c) => ({ kind: 'conv', id: c.id, label: c.title, hint: `${c.count} msgs`, run: () => onSelectConvo(c.id) }))
+  ]
+
+  const onKey = (e) => {
+    if (e.key === 'ArrowDown') { e.preventDefault(); setIdx((i) => Math.min(i + 1, items.length - 1)) }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setIdx((i) => Math.max(i - 1, 0)) }
+    else if (e.key === 'Enter' && items[idx]) { e.preventDefault(); items[idx].run() }
+    else if (e.key === 'Escape') onClose()
+  }
+
+  return (
+    <div className="palette-overlay" onMouseDown={onClose}>
+      <div className="palette" onMouseDown={(e) => e.stopPropagation()}>
+        <div className="palette-search">
+          <Search size={15} />
+          <input
+            ref={inputRef}
+            value={query}
+            onChange={(e) => { setQuery(e.target.value); setIdx(0) }}
+            onKeyDown={onKey}
+            placeholder="Comandos o buscar conversaciones…"
+          />
+          <span className="kbd">ESC</span>
+        </div>
+        <div className="palette-list" ref={listRef}>
+          {items.length === 0 && <div className="palette-empty">Sin resultados</div>}
+          {items.map((it, i) => (
+            <div key={`${it.kind}-${it.id}`} className={`palette-item ${i === idx ? 'active' : ''}`} onMouseEnter={() => setIdx(i)} onMouseDown={() => it.run()}>
+              <span className="palette-label">{it.label}</span>
+              <span className="palette-hint">{it.hint}</span>
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   )
 }

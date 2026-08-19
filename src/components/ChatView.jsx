@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Send, Paperclip, Mic, Square, Settings, X, RefreshCw, Pencil, Copy, Check,
-  Volume2, Trash2, Loader2, ChevronDown, ChevronUp, Globe, Search, Sparkles, Image as ImageIcon, FileText, Zap, Download, FileCode2, MessageSquareX, GitCompareArrows, Bot, FileDown
+  Volume2, Trash2, Loader2, ChevronDown, ChevronUp, Globe, Search, Sparkles, Image as ImageIcon, FileText, Zap, Download, FileCode2, MessageSquareX, GitCompareArrows, Bot, FileDown, Brain, Bookmark
 } from 'lucide-react'
 import Markdown from './Markdown.jsx'
 import { uid, speak, cancelSpeech, bytesToBase64 } from '../api.js'
@@ -121,6 +121,12 @@ export default function ChatView({
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchQ, setSearchQ] = useState('')
   const [searchIdx, setSearchIdx] = useState(0)
+  const [mentions, setMentions] = useState([])
+  const [mentionOpen, setMentionOpen] = useState(false)
+  const [mentionQ, setMentionQ] = useState('')
+  const [mentionSel, setMentionSel] = useState(0)
+  const [mentionItems, setMentionItems] = useState([])
+  const mentionTriggerRef = useRef({ index: -1, query: '' })
   const recRef = useRef(null)
   const chunksRef = useRef([])
   const fileRef = useRef(null)
@@ -130,6 +136,7 @@ export default function ChatView({
   const pendingIdRef = useRef(null)
   const fullTextRef = useRef('')
   const imagesRef = useRef([])
+  const reasoningRef = useRef('')
   const flushTimerRef = useRef(null)
   const stickRef = useRef(true)
   const dragDepthRef = useRef(0)
@@ -141,6 +148,9 @@ export default function ChatView({
 
   const curProvider = providers.find((p) => p.id === conv.provider)
   const imageModel = !!curProvider?.imageModels?.includes(conv.model)
+  const supportsThinking = (conv.provider === 'anthropic' && /^claude-(sonnet|opus|fable|haiku)/.test(conv.model)) ||
+    (conv.provider === 'openai' && /^(gpt-5|o3)/.test(conv.model)) ||
+    (conv.provider === 'google' && /^gemini-3/.test(conv.model))
 
   const onScroll = () => {
     const el = scrollRef.current
@@ -181,7 +191,7 @@ export default function ChatView({
       flushTimerRef.current = null
       updateConv((c) => ({
         ...c,
-        messages: c.messages.map((m) => (m.id === assistantId ? { ...m, text: fullTextRef.current, images: imagesRef.current.length ? imagesRef.current : m.images } : m))
+        messages: c.messages.map((m) => (m.id === assistantId ? { ...m, text: fullTextRef.current, images: imagesRef.current.length ? imagesRef.current : m.images, reasoning: reasoningRef.current || m.reasoning } : m))
       }))
     }, 80)
   }
@@ -191,15 +201,21 @@ export default function ChatView({
     flushTimerRef.current = null
     updateConv((c) => ({
       ...c,
-      messages: c.messages.map((m) => (m.id === assistantId ? { ...m, text: fullTextRef.current, images: imagesRef.current.length ? imagesRef.current : m.images, streaming: false, ...extra } : m))
+      messages: c.messages.map((m) => (m.id === assistantId ? { ...m, text: fullTextRef.current, images: imagesRef.current.length ? imagesRef.current : m.images, reasoning: reasoningRef.current || m.reasoning, streaming: false, ...extra } : m))
     }))
   }
+
+  useEffect(() => {
+    const onExport = () => exportConvo()
+    window.addEventListener('nova:export', onExport)
+    return () => window.removeEventListener('nova:export', onExport)
+  })
 
   useEffect(() => {
     if (stickRef.current) scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
   }, [conv.messages, sending])
 
-  useEffect(() => {
+useEffect(() => {
     const onKey = (e) => {
       if (e.ctrlKey || e.metaKey) {
         if (e.key === 'l') { e.preventDefault(); inputRef.current?.focus() }
@@ -209,12 +225,148 @@ export default function ChatView({
       if (e.key === 'Escape') {
         if (delMenuId) setDelMenuId(null)
         else if (searchOpen) { setSearchOpen(false); setSearchQ(''); setSearchIdx(0); searchResultsRef.current = [] }
+        else if (mentionOpen) { setMentionOpen(false); setMentionQ(''); setMentionSel(0); setMentionItems([]) }
         else if (pendingIdRef.current) stop()
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  })
+  }, [delMenuId, searchOpen, mentionOpen])
+
+  const searchMentionFiles = async (query) => {
+    const ws = convRef.current?.workspace || settings?.agent?.workspace
+    if (!ws) return []
+    try {
+      const res = await window.api.listWorkspaceFiles(ws, '.', query || undefined)
+      if (res?.ok) return res.entries.filter((e) => !e.dir).slice(0, 15)
+    } catch { }
+    return []
+  }
+
+  const handleMentionTrigger = (value, cursorPos) => {
+    const beforeCursor = value.slice(0, cursorPos)
+    const match = beforeCursor.match(/@([^\s@]*)$/)
+    if (match) {
+      const query = match[1]
+      const triggerIndex = cursorPos - match[0].length
+      mentionTriggerRef.current = { index: triggerIndex, query }
+      setMentionQ(query)
+      setMentionOpen(true)
+      setMentionSel(0)
+      searchMentionFiles(query).then((items) => setMentionItems(items))
+    } else {
+      setMentionOpen(false)
+      setMentionQ('')
+      setMentionItems([])
+      mentionTriggerRef.current = { index: -1, query: '' }
+    }
+  }
+
+  const applyMention = (item) => {
+    const { index, query } = mentionTriggerRef.current
+    if (index === -1) return
+    const before = input.slice(0, index)
+    const after = input.slice(index + 1 + query.length)
+    const mentionText = `@${item.rel || item.name} `
+    setInput(before + mentionText + after)
+    setMentions((m) => [...m, { id: uid(), name: item.name, path: item.rel || item.name, kind: 'file' }])
+    setMentionOpen(false)
+    setMentionQ('')
+    setMentionItems([])
+    mentionTriggerRef.current = { index: -1, query: '' }
+    setTimeout(() => inputRef.current?.focus(), 10)
+  }
+
+  const removeMention = (id) => {
+    setMentions((m) => m.filter((x) => x.id !== id))
+  }
+
+  const SLASH_CMDS = [
+  { id: 'resumir', label: 'Resumir la conversación', desc: 'Haz un resumen con puntos clave', sys: 'Resume la conversación anterior de forma clara y concisa, con puntos clave.' },
+  { id: 'mejorar', label: 'Mejorar la última respuesta', desc: 'Corrige y mejora la respuesta anterior', sys: 'Eres un editor experto. Mejora la respuesta del asistente anterior: corrige errores, hazla más clara y completa, manteniendo el formato y el sentido.' },
+  { id: 'traducir', label: 'Traducir la última respuesta', desc: 'Traduce la respuesta anterior al español', sys: 'Eres un traductor experto. Traduce la respuesta del asistente anterior al español manteniendo tono, formato y significado.' },
+  { id: 'corto', label: 'Resumir la última respuesta', desc: 'Máximo 3 líneas', sys: 'Resume la última respuesta del asistente en un máximo de 3 líneas.' },
+  { id: 'explicar', label: 'Explicar la última respuesta', desc: 'Detalle paso a paso con ejemplos', sys: 'Explica la última respuesta del asistente con más detalle: paso a paso, con ejemplos y clarificando conceptos.' }
+]
+
+const ARTIFACT_RE = /```(html|svg)\n([\s\S]*?)```/g
+
+function extractArtifacts(text) {
+  const out = []
+  if (!text) return out
+  let m
+  ARTIFACT_RE.lastIndex = 0
+  while ((m = ARTIFACT_RE.exec(text)) !== null) {
+    out.push({ id: `a${m.index}_${out.length}`, lang: m[1], code: m[2] })
+  }
+  return out
+}
+
+function Artifact({ art, fileName }) {
+  const [editing, setEditing] = useState(false)
+  const [code, setCode] = useState(art.code)
+  const [copied, setCopied] = useState(false)
+  useEffect(() => setCode(art.code), [art.code])
+  const srcDoc = art.lang === 'html' ? code : `<!DOCTYPE html><html><body style="margin:0">${code}</body></html>`
+  return (
+    <div className="artifact">
+      <div className="artifact-head">
+        <span className="artifact-badge">{art.lang === 'html' ? '🌐' : '✨'} {art.lang.toUpperCase()}</span>
+        <code className="artifact-file">{fileName}</code>
+        <div className="artifact-actions">
+          <button className="icon-btn" title="Editar código" onClick={() => setEditing(!editing)}>{editing ? <Check size={13} /> : <Pencil size={13} />}</button>
+          <button
+            className="icon-btn"
+            title="Copiar código"
+            onClick={async () => {
+              await navigator.clipboard.writeText(code)
+              setCopied(true)
+              setTimeout(() => setCopied(false), 1500)
+            }}
+          >
+            {copied ? <Check size={13} /> : <Copy size={13} />}
+          </button>
+          <button className="icon-btn" title="Descargar" onClick={() => window.api.exportText(fileName, code)}>
+            <Download size={13} />
+          </button>
+        </div>
+      </div>
+      {editing && (
+        <textarea
+          className="artifact-edit"
+          value={code}
+          onChange={(e) => setCode(e.target.value)}
+          spellCheck={false}
+        />
+      )}
+      <iframe
+        key={code.length + (editing ? 'e' : '')}
+        className="artifact-frame"
+        srcDoc={srcDoc}
+        sandbox="allow-scripts"
+        title={fileName}
+      />
+    </div>
+  )
+}
+
+  const [slashOpen, setSlashOpen] = useState(false)
+  const [slashQ, setSlashQ] = useState('')
+  const [slashSel, setSlashSel] = useState(0)
+  const [tplOpen, setTplOpen] = useState(false)
+
+  const applySlash = (cmd) => {
+    setInput(`/${cmd.id} `)
+    setSlashOpen(false)
+    setSlashQ('')
+    inputRef.current?.focus()
+  }
+
+  const applyTemplate = (t) => {
+    setInput((v) => (v ? `${v}\n${t.text}` : t.text))
+    setTplOpen(false)
+    inputRef.current?.focus()
+  }
 
   const stop = () => {
     cancelSpeech()
@@ -228,22 +380,66 @@ export default function ChatView({
   }
 
   const send = async (textOverride, imageOverride, base) => {
-    const text = (textOverride ?? input).trim()
+    let text = (textOverride ?? input).trim()
     const attach = imageOverride ?? attachments
     if (sending || preparing || (!text && !attach.length)) return
     cancelSpeech()
     setSearchFailed(false)
     setPreparing(true)
 
+    let slashSys = ''
+    let userLabel = text
+    const slashMatch = text.match(/^\/(resumir|mejorar|traducir|corto|explicar)\b(?:\s+([\s\S]*))?$/)
+    if (slashMatch) {
+      const cmd = SLASH_CMDS.find((c) => c.id === slashMatch[1])
+      const param = (slashMatch[2] || '').trim()
+      const lastAsst = [...(base ?? convRef.current.messages)].reverse().find((m) => m.role === 'assistant' && m.text)
+      if (cmd.id !== 'resumir' && !lastAsst && !param) {
+        notify('No hay una respuesta anterior para aplicar el comando')
+        setPreparing(false)
+        return
+      }
+      slashSys = cmd.sys
+      if (cmd.id === 'resumir') {
+        text = param || 'Haz el resumen.'
+        userLabel = param ? `📝 Resumir: ${param}` : '📝 Resumir la conversación'
+      } else {
+        text = param || `Aplica el comando a esta respuesta:\n\n${lastAsst.text}`
+        const icons = { mejorar: '✏️', traducir: '🌐', corto: '⚡', explicar: '🔍' }
+        userLabel = `${icons[cmd.id]} ${cmd.label}`
+      }
+    }
+
     const images = attach.filter((a) => a.kind === 'image')
     const textFiles = attach.filter((a) => a.kind === 'text')
+
+    let mentionContent = ''
+    if (mentions.length > 0) {
+      const ws = convRef.current?.workspace || settings?.agent?.workspace
+      if (ws) {
+        for (const m of mentions) {
+          try {
+            const res = await window.api.readWorkspaceFile(ws, m.path)
+            if (res?.ok) {
+              mentionContent += `\n\n---\n### Archivo referenciado: ${res.path}\n${res.text.slice(0, 15000)}`
+            }
+          } catch { }
+        }
+      }
+    }
+
     let content = text
     if (textFiles.length) {
       const parts = textFiles.map((a) => `\n\n---\n### Archivo: ${a.name}\n${(a.text || '').slice(0, 12000)}`)
       content = text ? text + parts.join('') : 'Analiza estos archivos:\n' + parts.join('')
     }
-    const userMsg = { id: uid(), role: 'user', text: content, images: images.map((i) => ({ name: i.name, mime: i.mime, data: i.data })) }
+    if (mentionContent) {
+      content = content ? content + mentionContent : 'Archivos referenciados:' + mentionContent
+    }
+    const userMsg = { id: uid(), role: 'user', text: userLabel || content, images: images.map((i) => ({ name: i.name, mime: i.mime, data: i.data })) }
     const assistantId = uid()
+
+    setMentions([])
 
     let searchContext = null
     if (webSearch && text && !imageModel) {
@@ -265,6 +461,24 @@ export default function ChatView({
       if (lastGen) contextImage = { mime: lastGen.images[0].mime, data: lastGen.images[0].data }
     }
 
+    let ragContext = ''
+    const ragId = convRef.current.ragProject
+    if (ragId && text && !imageModel) {
+      setSearching(true)
+      try {
+        const r = await window.api.projectSearch({ id: ragId, query: text, topK: 5 })
+        if (r?.ok && r.results?.length) {
+          ragContext = r.results.map((c) => `[${c.file}]\n${c.text}`).join('\n\n')
+        } else {
+          setSearchFailed(true)
+        }
+      } catch {
+        setSearchFailed(true)
+      } finally {
+        setSearching(false)
+      }
+    }
+
     const baseMsgs = base ?? convRef.current.messages
     const msgs = baseMsgs.map((m) => ({ role: m.role, text: m.text, images: m.images }))
     msgs.push({ role: 'user', text: content, images: userMsg.images })
@@ -278,6 +492,7 @@ export default function ChatView({
     pendingIdRef.current = assistantId
     fullTextRef.current = ''
     imagesRef.current = []
+    reasoningRef.current = ''
     stickRef.current = true
     updateConv(newConv)
     setInput('')
@@ -289,17 +504,22 @@ export default function ChatView({
       {
         provider: convRef.current.provider,
         model: convRef.current.model,
-        system: convRef.current.system || '',
+        system: [slashSys || convRef.current.system || '', ragContext ? `## Contexto de tu proyecto de conocimiento (RESPONDE USÁNDOLO)\n${ragContext}` : ''].filter(Boolean).join('\n\n'),
         temperature: convRef.current.temperature ?? 0.7,
         messages: msgs,
         images: userMsg.images,
         searchContext,
         ...(imageModel ? { imageFormat: convRef.current.imgFormat || 'square', imageCount: convRef.current.imgCount || 1 } : {}),
-        ...(contextImage ? { contextImage } : {})
+        ...(contextImage ? { contextImage } : {}),
+        ...(supportsThinking ? { showThinking: !!convRef.current.showThinking, reasoningEffort: convRef.current.reasoningEffort || '' } : {})
       },
       {
         onDelta: (t) => {
           fullTextRef.current += t
+          flushStream(assistantId)
+        },
+        onReasoning: (t) => {
+          reasoningRef.current += t
           flushStream(assistantId)
         },
         onImage: (img) => {
@@ -783,8 +1003,17 @@ ${mdToHtml(convoMessagesMd())}
                 <div className="assistant-body">
                   {m.search && <div className="search-note"><Search size={12} /> Esta respuesta incluye búsqueda web</div>}
                   <div className="md">
+                    {m.reasoning && !m.streaming && (
+                      <details className="reasoning-box">
+                        <summary>💭 Razonamiento del modelo</summary>
+                        <div className="reasoning-content">{m.reasoning}</div>
+                      </details>
+                    )}
                     {m.text ? <Markdown text={m.text} /> : m.streaming ? <span className="gen-hint"><Loader2 size={13} className="spin" /> Generando imagen…</span> : <span className="cursor-blink" />}
                     {m.streaming && m.text && <span className="cursor-blink" />}
+                    {!m.streaming && extractArtifacts(m.text || '').map((art) => (
+                      <Artifact key={art.id} art={art} fileName={`artifact-${m.id.slice(-6)}.${art.lang}`} />
+                    ))}
                     {m.error && (
                       <div className="error-box retry-box">
                         <span>{m.error}</span>
@@ -836,10 +1065,38 @@ ${mdToHtml(convoMessagesMd())}
       <div className="input-area">
         {showOptions && (
           <div className="options-panel">
-            <label className="row-check">
-              <input type="checkbox" checked={webSearch} onChange={(e) => setWebSearch(e.target.checked)} />
-              <Globe size={14} /> Buscar en web antes de responder
-            </label>
+{supportsThinking && (
+            <>
+              <label className="row-check">
+                <input type="checkbox" checked={!!conv.showThinking} onChange={(e) => updateConv({ ...conv, showThinking: e.target.checked })} />
+                <Brain size={14} /> Mostrar razonamiento del modelo
+              </label>
+              <div className="row-slider">
+                <span>Esfuerzo de razonamiento</span>
+                <select className="thinking-select" value={conv.reasoningEffort || ''} onChange={(e) => updateConv({ ...conv, reasoningEffort: e.target.value })}>
+                  <option value="">Automático</option>
+                  <option value="bajo">Bajo</option>
+                  <option value="medio">Medio</option>
+                  <option value="alto">Alto</option>
+                </select>
+              </div>
+            </>
+          )}
+          {!imageModel && (settings?.projects || []).length > 0 && (
+            <div className="row-slider">
+              <span>Proyecto de conocimiento</span>
+              <select className="thinking-select" value={conv.ragProject || ''} onChange={(e) => updateConv({ ...conv, ragProject: e.target.value })}>
+                <option value="">Sin proyecto</option>
+                {settings.projects.map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
+          <label className="row-check">
+            <input type="checkbox" checked={webSearch} onChange={(e) => setWebSearch(e.target.checked)} />
+            <Globe size={14} /> Buscar en web antes de responder
+          </label>
             <div className="row-slider">
               <span>Creatividad (temperatura)</span>
               <input
@@ -921,13 +1178,64 @@ ${mdToHtml(convoMessagesMd())}
           </div>
         )}
 
+        {mentions.length > 0 && (
+          <div className="mentions-bar">
+            {mentions.map((m) => (
+              <div key={m.id} className="mention-chip">
+                <FileCode2 size={12} />
+                <span>@{m.name}</span>
+                <button className="icon-btn" onClick={() => removeMention(m.id)}><X size={10} /></button>
+              </div>
+            ))}
+          </div>
+        )}
+
         {attachError && <div className="error-box small">{attachError}</div>}
 
+        <div className="input-bar-wrap">
+          {slashOpen && (
+            <div className="slash-menu">
+              {SLASH_CMDS.filter((c) => c.id.startsWith(slashQ)).map((c, i) => (
+                <div key={c.id} className={`slash-item ${i === slashSel ? 'active' : ''}`} onMouseEnter={() => setSlashSel(i)} onMouseDown={() => applySlash(c)}>
+                  <span className="slash-name">/{c.id}</span>
+                  <span className="slash-desc">{c.desc}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {mentionOpen && mentionItems.length > 0 && (
+            <div className="mention-menu">
+              {mentionItems.map((item, i) => (
+                <div key={item.rel || item.name} className={`mention-item ${i === mentionSel ? 'active' : ''}`} onMouseEnter={() => setMentionSel(i)} onMouseDown={() => applyMention(item)}>
+                  <FileCode2 size={12} />
+                  <span className="mention-name">@{item.rel || item.name}</span>
+                  <span className="mention-hint">{item.size ? `${Math.round(item.size / 1024)} KB` : ''}</span>
+                </div>
+              ))}
+            </div>
+          )}
         <div className="input-bar">
           {!imageModel && (
             <button className={`icon-btn ${webSearch ? 'on' : ''}`} onClick={() => setWebSearch(!webSearch)} title="Buscar en web">
               <Globe size={17} />
             </button>
+          )}
+          {!imageModel && settings?.templates?.length > 0 && (
+            <div className="tpl-wrap">
+              <button className="icon-btn" onClick={() => setTplOpen(!tplOpen)} title="Insertar plantilla">
+                <Bookmark size={17} />
+              </button>
+              {tplOpen && (
+                <div className="tpl-menu">
+                  {settings.templates.map((t) => (
+                    <div key={t.id} className="slash-item" onMouseDown={() => applyTemplate(t)}>
+                      <span className="slash-name">{t.name}</span>
+                      <span className="slash-desc">{t.text.slice(0, 60)}{t.text.length > 60 ? '…' : ''}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           )}
           <button className={`icon-btn ${showOptions ? 'on' : ''}`} onClick={() => setShowOptions(!showOptions)} title="Opciones">
             <ChevronDown size={17} />
@@ -940,13 +1248,41 @@ ${mdToHtml(convoMessagesMd())}
             ref={inputRef}
             className="input"
             value={input}
-            placeholder={searching ? 'Buscando en web…' : imageModel ? 'Describe la imagen (o adjunta una foto para editarla)…' : 'Escribe tu mensaje… (Enter para enviar, Shift+Enter para salto de línea)'}
-            onChange={(e) => setInput(e.target.value)}
+            placeholder={searching ? 'Buscando en web…' : imageModel ? 'Describe la imagen (o adjunta una foto para editarla)…' : 'Escribe tu mensaje… (Enter para enviar, Shift+Enter para salto de línea) @ para referenciar archivos'}
+            onChange={(e) => {
+              const v = e.target.value
+              setInput(v)
+              const m = v.match(/^\/(\w*)$/)
+              if (m && !imageModel) { setSlashOpen(true); setSlashQ(m[1]); setSlashSel(0) }
+              else { setSlashOpen(false); setSlashQ('') }
+              if (!v) setTplOpen(false)
+              const cursorPos = e.target.selectionStart
+              handleMentionTrigger(v, cursorPos)
+            }}
             onKeyDown={(e) => {
+              if (mentionOpen) {
+                if (e.key === 'ArrowDown') { e.preventDefault(); setMentionSel((i) => Math.min(i + 1, mentionItems.length - 1)) }
+                else if (e.key === 'ArrowUp') { e.preventDefault(); setMentionSel((i) => Math.max(i - 1, 0)) }
+                else if (e.key === 'Enter') { e.preventDefault(); if (mentionItems[mentionSel]) applyMention(mentionItems[mentionSel]) }
+                else if (e.key === 'Escape') { setMentionOpen(false); setMentionQ(''); setMentionItems([]) }
+                return
+              }
+              if (slashOpen) {
+                const list = SLASH_CMDS.filter((c) => c.id.startsWith(slashQ))
+                if (e.key === 'ArrowDown') { e.preventDefault(); setSlashSel((i) => Math.min(i + 1, list.length - 1)) }
+                else if (e.key === 'ArrowUp') { e.preventDefault(); setSlashSel((i) => Math.max(i - 1, 0)) }
+                else if (e.key === 'Enter') { e.preventDefault(); if (list[slashSel]) applySlash(list[slashSel]) }
+                else if (e.key === 'Escape') { setSlashOpen(false); setSlashQ('') }
+                return
+              }
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault()
                 send()
               }
+            }}
+            onSelect={(e) => {
+              const cursorPos = e.target.selectionStart
+              handleMentionTrigger(input, cursorPos)
             }}
             onPaste={(e) => {
               const items = e.clipboardData?.items || []
@@ -975,6 +1311,7 @@ ${mdToHtml(convoMessagesMd())}
             {sending || preparing ? <Loader2 size={16} className="spin" /> : imageModel ? <Sparkles size={16} /> : <Send size={16} />}
             {imageModel && !sending && !preparing && <span className="send-label">Generar</span>}
           </button>
+        </div>
         </div>
         <div className="input-foot">
           <span className="hint">

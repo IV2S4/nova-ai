@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { X, KeyRound, Eye, EyeOff, Save, Trash2, CheckCircle2, XCircle, Loader2, ExternalLink, Volume2, Sparkles, Download, Upload, Brain, Plus, Play } from 'lucide-react'
+import { X, KeyRound, Eye, EyeOff, Save, Trash2, CheckCircle2, XCircle, Loader2, ExternalLink, Volume2, Sparkles, Download, Upload, Brain, Plus, Play, RefreshCw, Plug, Server } from 'lucide-react'
 
 export default function SettingsModal({ open, onClose, providers, settings, onSaved, testProvider, onClearHistory, currentVersion, onShowChangelog }) {
   const [draft, setDraft] = useState(null)
@@ -10,6 +10,67 @@ export default function SettingsModal({ open, onClose, providers, settings, onSa
   const [memData, setMemData] = useState(null)
   const [memText, setMemText] = useState('')
   const [updState, setUpdState] = useState(null)
+  const [projects, setProjects] = useState(null)
+  const [newProject, setNewProject] = useState('')
+  const [projBusy, setProjBusy] = useState(false)
+const [projectRules, setProjectRules] = useState('')
+  const [savingRules, setSavingRules] = useState(false)
+  const [rulesStatus, setRulesStatus] = useState('')
+  const [mcpServers, setMcpServers] = useState([])
+  const [mcpStatus, setMcpStatus] = useState('')
+  const [mcpTesting, setMcpTesting] = useState('')
+
+  const workspace = settings?.agent?.workspace || ''
+
+  const loadRules = async () => {
+    if (!workspace) return
+    const r = await window.api.readWorkspaceRules(workspace)
+    if (r?.ok) { setProjectRules(r.rules); setRulesStatus('Cargado') }
+    else { setRulesStatus(r?.error || 'Error al cargar') }
+    setTimeout(() => setRulesStatus(''), 3000)
+  }
+
+const saveRules = async () => {
+    if (!workspace) return
+    setSavingRules(true)
+    const r = await window.api.writeWorkspaceRules(workspace, projectRules)
+    setSavingRules(false)
+    setRulesStatus(r?.ok ? 'Guardado ✓' : (r?.error || 'Error al guardar'))
+    setTimeout(() => setRulesStatus(''), 3000)
+  }
+
+  const loadMcp = async () => {
+    const r = await window.api?.mcpList()
+    if (r?.ok) setMcpServers(r.servers)
+  }
+
+  const saveMcp = async () => {
+    setMcpStatus('Guardando…')
+    const r = await window.api?.mcpSave(mcpServers)
+    if (r?.ok) {
+      setMcpServers(r.servers)
+      onSaved(r.settings)
+      setMcpStatus('Guardado ✓ (los servidores se reinician)')
+    } else {
+      setMcpStatus(r?.error || 'Error al guardar')
+    }
+    setTimeout(() => setMcpStatus(''), 3500)
+  }
+
+  const testMcp = async (idx) => {
+    const s = mcpServers[idx]
+    if (!s?.command) return
+    setMcpTesting(idx)
+    const r = await window.api?.mcpTools(s)
+    setMcpTesting('')
+    if (r?.ok) setMcpStatus(`Servidor OK — ${r.tools.length} herramientas: ${r.tools.map((t) => t.name).slice(0, 8).join(', ')}${r.tools.length > 8 ? '…' : ''}`)
+    else setMcpStatus(r?.error || 'Error al conectar')
+    setTimeout(() => setMcpStatus(''), 6000)
+  }
+
+  const updateMcp = (idx, key, val) => {
+    setMcpServers((prev) => prev.map((s, i) => (i === idx ? { ...s, [key]: val } : s)))
+  }
 
   useEffect(() => {
     if (open) {
@@ -20,9 +81,22 @@ export default function SettingsModal({ open, onClose, providers, settings, onSa
       const load = () => setVoices(window.speechSynthesis?.getVoices() || [])
       load()
       window.speechSynthesis?.addEventListener('voiceschanged', load)
+      refreshProjects()
+      loadRules()
+      loadMcp()
       return () => window.speechSynthesis?.removeEventListener('voiceschanged', load)
     }
   }, [open])
+
+  const refreshProjects = async () => {
+    const r = await window.api.projectList()
+    setProjects(r?.ok ? r.projects : [])
+  }
+
+  const syncProjectsSetting = async (list) => {
+    const saved = await window.api.saveSettings({ projects: list.map((p) => ({ id: p.id, name: p.name })) })
+    onSaved(saved)
+  }
 
   if (!open || !draft) return null
 
@@ -266,6 +340,207 @@ export default function SettingsModal({ open, onClose, providers, settings, onSa
               </div>
             )}
             <p className="hint">Consejo: escribe «recuerda que…» en cualquier chat y la app lo guardará automáticamente como recuerdo.</p>
+          </div>
+
+          <h3>Proyectos de conocimiento</h3>
+          <div className="provider-card">
+            <p className="hint">Añade archivos (código, docs, PDFs) de tu proyecto: el chat los buscará automáticamente y responderá con ese contexto, como un RAG local. Todo se queda en tu equipo.</p>
+            {(projects || []).length === 0 && <p className="hint">Todavía no hay proyectos. Crea uno abajo y añádele archivos.</p>}
+            {(projects || []).map((p) => (
+              <div key={p.id} className="project-row">
+                <div className="project-info">
+                  <strong>{p.name}</strong>
+                  <span className="project-meta">{p.files} archivos · {p.chunks} fragmentos</span>
+                </div>
+                <div className="project-actions">
+                  <button
+                    className="btn small"
+                    disabled={projBusy}
+                    onClick={async () => {
+                      setProjBusy(true)
+                      const paths = await window.api.projectPickFiles()
+                      if (paths.length) {
+                        const r = await window.api.projectAddFiles({ id: p.id, paths })
+                        if (r?.ok) {
+                          const bad = r.added.filter((a) => !a.ok)
+                          if (bad.length) alert(`${r.added.length - bad.length} archivo(s) añadidos.\n\nNo se pudieron indexar:\n${bad.map((b) => `${b.name}: ${b.error || 'sin texto'}`).join('\n')}`)
+                        }
+                        await refreshProjects()
+                      }
+                      setProjBusy(false)
+                    }}
+                  >
+                    <Plus size={13} /> Añadir archivos
+                  </button>
+                  <button
+                    className="btn small"
+                    onClick={async () => {
+                      const idx = await window.api.projectIndex(p.id)
+                      const names = idx?.ok ? idx.files.map((f) => f.name) : []
+                      if (!names.length) { alert('Este proyecto no tiene archivos indexados.'); return }
+                      const name = prompt(`Eliminar archivo del proyecto "${p.name}":\n${names.map((n) => `- ${n}`).join('\n')}`, names[0])
+                      if (name) {
+                        await window.api.projectRemoveFile({ id: p.id, fileName: name })
+                        await refreshProjects()
+                      }
+                    }}
+                  >
+                    <Trash2 size={13} /> Quitar archivo
+                  </button>
+                  <button
+                    className="icon-btn danger"
+                    title="Eliminar proyecto"
+                    onClick={async () => {
+                      if (!confirm(`¿Eliminar el proyecto de conocimiento "${p.name}"? Se borrará su índice.`)) return
+                      await window.api.projectDelete(p.id)
+                      await refreshProjects()
+                      await syncProjectsSetting((projects || []).filter((x) => x.id !== p.id))
+                    }}
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+              </div>
+            ))}
+            <div className="project-create">
+              <input
+                className="tpl-name project-name-input"
+                value={newProject}
+                placeholder="Nombre del proyecto (ej. manual-api)"
+                onChange={(e) => setNewProject(e.target.value)}
+                onKeyDown={async (e) => {
+                  if (e.key === 'Enter' && newProject.trim()) {
+                    const r = await window.api.projectCreate(newProject.trim())
+                    if (r?.ok) {
+                      const next = [...(projects || []), r.project]
+                      setProjects(next)
+                      await syncProjectsSetting(next)
+                      setNewProject('')
+                    } else {
+                      alert(r?.error || 'No se pudo crear el proyecto')
+                    }
+                  }
+                }}
+              />
+              <button
+                className="btn"
+                disabled={!newProject.trim()}
+                onClick={async () => {
+                  const r = await window.api.projectCreate(newProject.trim())
+                  if (r?.ok) {
+                    const next = [...(projects || []), r.project]
+                    setProjects(next)
+                    await syncProjectsSetting(next)
+                    setNewProject('')
+                  } else {
+                    alert(r?.error || 'No se pudo crear el proyecto')
+                  }
+                }}
+              >
+                <Plus size={14} /> Crear proyecto
+              </button>
+            </div>
+          </div>
+
+          <h3>Reglas del proyecto (.novarules)</h3>
+          <div className="provider-card">
+            <p className="hint">Crea o edita el archivo <code>.novarules</code> del proyecto actual: instrucciones que el agente de programación seguirá siempre en ese workspace (estilo, stack, convenciones...), como Cursor Rules o CLAUDE.md.</p>
+            {workspace ? (
+              <>
+                <textarea
+                  className="rules-editor"
+                  value={projectRules}
+                  onChange={(e) => setProjectRules(e.target.value)}
+                  placeholder="# Reglas del proyecto
+- Usa React 19 y Vite
+- Mantén la UI en español
+- ..."
+                />
+                <div className="rules-actions">
+                  <button className="btn" onClick={loadRules}><RefreshCw size={13} /> Recargar</button>
+                  <button className="btn primary" onClick={saveRules} disabled={savingRules}>
+                    {savingRules ? <Loader2 size={13} className="spin" /> : <Save size={13} />} Guardar reglas
+                  </button>
+                  <span className="rules-status">{rulesStatus}</span>
+                </div>
+              </>
+            ) : (
+              <p className="hint">Primero elige un proyecto del agente (pestaña Agente IA) para gestionar sus reglas.</p>
+            )}
+          </div>
+
+          <h3>Servidores MCP</h3>
+          <div className="provider-card">
+            <p className="hint">
+              Conecta servidores MCP (Model Context Protocol) para dar al agente herramientas externas: bases de datos, navegador, Figma, APIs propias, etc. Escribe el comando con el que se lanza (p. ej. <code>npx -y @modelcontextprotocol/server-filesystem C:\mi\carpeta</code>).
+            </p>
+            <div className="mcp-list">
+              {mcpServers.map((s, i) => (
+                <div key={i} className="mcp-row">
+                  <label className="mcp-enabled" title="Activar/desactivar servidor">
+                    <input type="checkbox" checked={s.enabled !== false} onChange={(e) => updateMcp(i, 'enabled', e.target.checked)} />
+                  </label>
+                  <div className="mcp-fields">
+                    <input className="mcp-input" placeholder="Nombre (ej. Filesystem)" value={s.name || ''} onChange={(e) => updateMcp(i, 'name', e.target.value)} />
+                    <input className="mcp-input mono" placeholder="Comando (ej. npx -y @modelcontextprotocol/server-filesystem …)" value={s.command || ''} onChange={(e) => updateMcp(i, 'command', e.target.value)} />
+                  </div>
+                  <div className="mcp-actions">
+                    <button className="btn small" onClick={() => testMcp(i)} disabled={mcpTesting !== '' || !s.command} title="Probar conexión y listar herramientas">
+                      {mcpTesting === i ? <Loader2 size={12} className="spin" /> : <Plug size={12} />} Probar
+                    </button>
+                    <button className="icon-btn danger" onClick={() => setMcpServers((prev) => prev.filter((_, j) => j !== i))} title="Eliminar servidor"><Trash2 size={13} /></button>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="mcp-actions-bar">
+              <button className="btn" onClick={() => setMcpServers((prev) => [...prev, { name: '', command: '', enabled: true }])}><Plus size={13} /> Añadir servidor</button>
+              <button className="btn primary" onClick={saveMcp}><Save size={13} /> Guardar servidores</button>
+              <span className="rules-status">{mcpStatus}</span>
+            </div>
+          </div>
+
+          <h3>Plantillas</h3>
+          <div className="provider-card">
+            <p className="hint">Plantillas reutilizables que puedes insertar en el chat con un clic (botón 🏷️ del compositor).</p>
+            {(draft.templates || []).map((t, i) => (
+              <div key={t.id} className="template-row">
+                <input
+                  className="tpl-name"
+                  value={t.name}
+                  placeholder="Nombre de la plantilla"
+                  onChange={(e) => {
+                    const arr = [...draft.templates]
+                    arr[i] = { ...arr[i], name: e.target.value }
+                    set('templates', arr)
+                  }}
+                />
+                <textarea
+                  className="tpl-text"
+                  rows={2}
+                  value={t.text}
+                  placeholder="Texto de la plantilla…"
+                  onChange={(e) => {
+                    const arr = [...draft.templates]
+                    arr[i] = { ...arr[i], text: e.target.value }
+                    set('templates', arr)
+                  }}
+                />
+                <button
+                  className="icon-btn"
+                  title="Eliminar plantilla"
+                  onClick={() => set('templates', draft.templates.filter((x) => x.id !== t.id))}
+                >
+                  <Trash2 size={13} />
+                </button>
+              </div>
+            ))}
+            <button
+              className="btn"
+              onClick={() => set('templates', [...(draft.templates || []), { id: `t${Date.now()}`, name: '', text: '' }])}
+            >
+              <Plus size={14} /> Añadir plantilla
+            </button>
           </div>
 
           <h3>General</h3>

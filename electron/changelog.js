@@ -1,5 +1,20 @@
 module.exports = {
   entries: {
+    '2.0.0': [
+      '🤖 SERVERS MCP (Model Context Protocol): conecta herramientas externas al agente (editores, navegadores, bases de datos…) desde Ajustes → MCP, con botón para probar cada servidor',
+      '🗂️ PROYECTOS DE CONOCIMIENTO: crea proyectos con archivos (PDF, docs, código…), Nova los indexa en fragmentos y el agente los consulta con búsqueda por relevancia — respuestas basadas en TU documentación',
+      '📝 MODO PLAN del agente: investiga y propone cambios sin tocar tu código — cada propuesta llega como diff con botones Aplicar / Aplicar todo / Revertir, hunk a hunk',
+      '💾 CHECKPOINTS: antes de aplicar propuestas se crea una instantánea de tus archivos y puedes restaurarla con un clic si algo sale mal',
+      '🔀 PANEL GIT integrado: estado de archivos, staging/unstage, diff, historial de commits, commit con mensaje generado por IA y rama actual',
+      '🧠 MENCIONA ARCHIVOS con @: escribe @ y elige archivos o carpetas del proyecto para dárselos de contexto al agente (también puedes copiar su ruta)',
+      '📌 Reglas de proyecto (.novarules): un archivo en tu carpeta que el agente obedece siempre (estilo de código, convenciones…), editable desde el panel del agente',
+      '⌨️ Paleta de comandos con Ctrl+K: cambia de conversación, ve al comparador/agente, exporta o abre ajustes sin tocar el ratón',
+      '🗜️ Sesiones largas ya no explotan: si el contexto de una tarea anterior supera el límite, se comprime automáticamente con IA antes de retomarla',
+      '💭 Razonamiento en vivo: los modelos que emiten "thinking" (Anthropic, Gemini y compatible OpenAI) lo muestran en la tarjeta de la tarea',
+      '⏱️ Timeouts de 5 min por llamada del agente y mensajes de error claros cuando el proveedor tarda demasiado',
+      '🔍 Búsqueda grep en el agente: encuentra patrones en todo el proyecto ignorando node_modules, dist, build y .git',
+      '🌐 Errores de Git traducidos al español con consejos (identidad de git, conflictos, repos no inicializados…)'
+    ],
     '1.9.0': [
       '🎨 GENERADOR DE IMÁGENES EN EL CHAT (como ChatGPT y Gemini): selecciona un modelo de imagen (GPT-Image 2/1, DALL·E 3, o Nano Banana de Gemini: gemini-3.1-flash-image, gemini-3.1-flash-lite-image, gemini-3-pro-image) y pídele lo que quieras',
       'Genera fotos desde texto: describe la escena y Nova dibuja la imagen directamente en la conversación',

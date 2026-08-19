@@ -10,8 +10,10 @@ const fileExtract = require('./files')
 const agent = require('./agent')
 const skillsLib = require('./skills')
 const memory = require('./memory')
+const projects = require('./projects')
 const changelog = require('./changelog')
 const updater = require('./updater')
+const mcp = require('./mcp')
 
 const activeRequests = new Map()
 
@@ -100,6 +102,9 @@ async function* withRetry(factory, attempts = 3, baseDelay = 3500) {
 }
 
 function friendlyError(raw, providerId) {
+  if (/timed out|aborted due to timeout|timeout/i.test(raw) && !/abort\(\)/.test(raw)) {
+    return 'El proveedor tardó demasiado en responder y la conexión se cortó. Reinténtalo, o si usas un modelo con razonamiento largo, prueba otro modelo o espera un momento.'
+  }
   if (raw === 'fetch failed') {
     return 'No se pudo conectar con el proveedor. Revisa tu conexión a internet o si el servidor local está en marcha.'
   }
@@ -323,7 +328,6 @@ ipcMain.handle('local:start', async (_e, providerId) => {
 ipcMain.handle('memory:list', () => memory.list())
 ipcMain.handle('memory:add', (_e, text, category) => memory.addEntry(app, text, category))
 ipcMain.handle('memory:delete', (_e, id) => memory.deleteEntry(id))
-ipcMain.handle('memory:learn', (_e, messages) => memory.learnFromMessages(messages))
 
 ipcMain.handle('agent:killTool', (_e, toolId) => ({ ok: agent.killTool(toolId) }))
 
@@ -334,6 +338,450 @@ ipcMain.handle('agent:history:list', async () => {
 ipcMain.handle('agent:history:get', async (_e, id) => historyStore.get(app, id))
 ipcMain.handle('agent:history:delete', async (_e, id) => historyStore.remove(app, id))
 ipcMain.handle('agent:history:save', async (_e, c) => historyStore.save(app, c))
+
+function applyHunks(content, hunks, appliedHunkIndices) {
+  if (!appliedHunkIndices || !appliedHunkIndices.length) return content
+  const lines = content.split('\n')
+  const sorted = [...appliedHunkIndices].sort((a, b) => a - b)
+  let offset = 0
+  for (const hi of sorted) {
+    const hunk = hunks[hi]
+    if (!hunk) continue
+    let lineIdx = hunk.oldStart - 1 + offset
+    let i = 0
+    while (i < hunk.lines.length) {
+      const l = hunk.lines[i]
+      if (l.startsWith(' ')) {
+        lineIdx++
+        i++
+      } else if (l.startsWith('-')) {
+        lines.splice(lineIdx, 1)
+        offset--
+        i++
+      } else if (l.startsWith('+')) {
+        lines.splice(lineIdx, 0, l.slice(1))
+        lineIdx++
+        offset++
+        i++
+      }
+    }
+  }
+  return lines.join('\n')
+}
+
+function parseHunks(diff) {
+  const hunks = []
+  const lines = diff.split('\n')
+  let currentHunk = null
+  for (const line of lines) {
+    if (line.startsWith('@@')) {
+      if (currentHunk) hunks.push(currentHunk)
+      const m = line.match(/@@ -(\d+),?(\d*) \+(\d+),?(\d*) @@/)
+      currentHunk = { header: line, oldStart: parseInt(m?.[1] || 1), oldLines: parseInt(m?.[2] || 1), newStart: parseInt(m?.[3] || 1), newLines: parseInt(m?.[4] || 1), lines: [] }
+    } else if (currentHunk) {
+      currentHunk.lines.push(line)
+    }
+  }
+  if (currentHunk) hunks.push(currentHunk)
+  return hunks
+}
+
+ipcMain.handle('agent:applyProposals', (_e, { proposals, workspace }) => {
+  try {
+    if (!workspace) return { ok: false, error: 'Falta el workspace' }
+    const applied = []
+    for (const p of proposals || []) {
+      if (!p || p.applied) continue
+      const target = agent.safeResolve(workspace, p.path)
+      let newContent = String(p.newContent ?? '')
+      if (p.appliedHunks && p.appliedHunks.length && p.diff) {
+        const hunks = parseHunks(p.diff)
+        const existed = fs.existsSync(target)
+        const oldContent = existed ? fs.readFileSync(target, 'utf8') : ''
+        newContent = applyHunks(oldContent, hunks, p.appliedHunks)
+      }
+      fs.mkdirSync(path.dirname(target), { recursive: true })
+      fs.writeFileSync(target, newContent, 'utf8')
+      applied.push(p.id)
+    }
+    return { ok: true, applied }
+  } catch (e) {
+    return { ok: false, error: e.message }
+  }
+})
+
+ipcMain.handle('agent:undoProposals', (_e, { proposals, workspace }) => {
+  try {
+    if (!workspace) return { ok: false, error: 'Falta el workspace' }
+    const undone = []
+    for (const p of [...(proposals || [])].reverse()) {
+      if (!p || !p.applied) continue
+      const target = agent.safeResolve(workspace, p.path)
+      if (p.oldExisted === false || p.oldContent == null) {
+        fs.rmSync(target, { force: true })
+      } else {
+        fs.writeFileSync(target, String(p.oldContent), 'utf8')
+      }
+      undone.push(p.id)
+    }
+    return { ok: true, undone }
+  } catch (e) {
+    return { ok: false, error: e.message }
+  }
+})
+
+function runGit(workspace, args) {
+  return new Promise((resolve) => {
+    const child = spawn('git', args, { cwd: workspace, shell: true, windowsHide: true })
+    let out = '', err = ''
+    child.stdout?.on('data', (d) => out += d.toString())
+    child.stderr?.on('data', (d) => err += d.toString())
+    child.on('close', (code) => resolve({ code, out: out.trim(), err: err.trim() }))
+    child.on('error', (e) => resolve({ code: -1, out: '', err: e.message }))
+  })
+}
+
+function gitFriendly(err) {
+  if (!err) return ''
+  const e = String(err)
+  if (/not a git repository/i.test(e)) return 'No es un repositorio Git. Inicializa uno con "git init" en el proyecto o usa la terminal.'
+  if (/please tell me who you are|user\.name|user\.email/i.test(e)) return 'Git no conoce tu identidad. Configúrala en una terminal: git config --global user.name "Tu Nombre" y git config --global user.email "tu@correo.com"'
+  if (/nothing to commit|no changes added to commit/i.test(e)) return 'No hay cambios que commitear.'
+  if (/no staged changes/i.test(e)) return 'No hay cambios preparados. Añade archivos primero (botón de staging).'
+  if (/unmerged|conflict/i.test(e)) return 'Hay conflictos sin resolver. Resuélvelos antes de continuar.'
+  if (/pathspec .* did not match/i.test(e)) return 'El archivo indicado no existe en el repositorio (puede que tenga otra ruta).'
+  if (/ambiguous argument|unknown revision/i.test(e)) return 'Git no reconoció la referencia indicada.'
+  if (/Permission denied/i.test(e)) return 'Permiso denegado al acceder al repositorio o a la carpeta del proyecto.'
+  return e.replace(/^fatal:\s*/i, 'Error de Git: ')
+}
+
+ipcMain.handle('git:status', async (_e, { workspace }) => {
+  try {
+    const r = await runGit(workspace, ['status', '--porcelain'])
+    return { ok: r.code === 0, status: r.out, error: gitFriendly(r.err) }
+  } catch (e) { return { ok: false, error: e.message } }
+})
+
+ipcMain.handle('git:diff', async (_e, { workspace, staged }) => {
+  try {
+    const args = ['diff']
+    if (staged) args.push('--staged')
+    const r = await runGit(workspace, args)
+    return { ok: r.code === 0, diff: r.out, error: gitFriendly(r.err) }
+  } catch (e) { return { ok: false, error: e.message } }
+})
+
+ipcMain.handle('git:log', async (_e, { workspace, max = 20 }) => {
+  try {
+    const r = await runGit(workspace, ['log', `--oneline`, `-${max}`, '--pretty=format:%H|%s|%an|%ad', '--date=short'])
+    const commits = r.out.split('\n').filter(Boolean).map((line) => {
+      const [hash, subject, author, date] = line.split('|')
+      return { hash, subject, author, date }
+    })
+    return { ok: r.code === 0, commits, error: gitFriendly(r.err) }
+  } catch (e) { return { ok: false, error: e.message } }
+})
+
+ipcMain.handle('git:stage', async (_e, { workspace, files }) => {
+  try {
+    const args = ['add', ...(Array.isArray(files) ? files : [files])]
+    const r = await runGit(workspace, args)
+    return { ok: r.code === 0, error: gitFriendly(r.err) }
+  } catch (e) { return { ok: false, error: e.message } }
+})
+
+ipcMain.handle('git:unstage', async (_e, { workspace, files }) => {
+  try {
+    const args = ['reset', 'HEAD', ...(Array.isArray(files) ? files : [files])]
+    const r = await runGit(workspace, args)
+    return { ok: r.code === 0, error: gitFriendly(r.err) }
+  } catch (e) { return { ok: false, error: e.message } }
+})
+
+ipcMain.handle('git:commit', async (_e, { workspace, message }) => {
+  try {
+    const r = await runGit(workspace, ['commit', '-m', message])
+    return { ok: r.code === 0, output: r.out, error: gitFriendly(r.err) }
+  } catch (e) { return { ok: false, error: e.message } }
+})
+
+ipcMain.handle('git:branch', async (_e, { workspace }) => {
+  try {
+    const r = await runGit(workspace, ['branch', '--show-current'])
+    return { ok: r.code === 0, branch: r.out.trim(), error: gitFriendly(r.err) }
+  } catch (e) { return { ok: false, error: e.message } }
+})
+
+async function simpleChat(settings, providerId, model, system, user) {
+  const { PROVIDER_DEFS, getConfig } = require('./providers')
+  const def = PROVIDER_DEFS.find((p) => p.id === providerId)
+  if (!def) throw new Error('Proveedor desconocido')
+  const cfg = getConfig(settings)[providerId]
+  if (!cfg.apiKey && !def.local) throw new Error('Falta la API key de ' + def.name)
+  if (def.id === 'anthropic') {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'x-api-key': cfg.apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+      body: JSON.stringify({ model, max_tokens: 400, system, messages: [{ role: 'user', content: user }] }),
+      signal: AbortSignal.timeout(60000)
+    })
+    if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error?.message || `Error HTTP ${res.status}`)
+    const data = await res.json()
+    return (data.content || []).map((c) => c.text || '').join('')
+  }
+  if (def.id === 'google') {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(cfg.apiKey)}`
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: system }] },
+        contents: [{ role: 'user', parts: [{ text: user }] }],
+        generationConfig: { maxOutputTokens: 400 }
+      }),
+      signal: AbortSignal.timeout(60000)
+    })
+    if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error?.message || `Error HTTP ${res.status}`)
+    const data = await res.json()
+    return (data.candidates?.[0]?.content?.parts || []).map((p) => p.text || '').join('')
+  }
+  const base = cfg.base || def.base || 'https://api.openai.com/v1'
+  const res = await fetch(`${base}/chat/completions`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...(cfg.apiKey ? { Authorization: `Bearer ${cfg.apiKey}` } : {}) },
+    body: JSON.stringify({ model, messages: [{ role: 'system', content: system }, { role: 'user', content: user }], max_tokens: 400 }),
+    signal: AbortSignal.timeout(60000)
+  })
+  if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error?.message || `Error HTTP ${res.status}`)
+  const data = await res.json()
+  return data.choices?.[0]?.message?.content || ''
+}
+
+ipcMain.handle('git:commitMessage', async (_e, { workspace }) => {
+  try {
+    const settings = await settingsStore.getSettings(app)
+    const { getProviderList } = require('./providers')
+    const providers = await getProviderList(settings)
+    const prov = providers.find((p) => p.hasKey) || providers.find((p) => p.local)
+    if (!prov) return { ok: false, error: 'Configura una API key en Ajustes para generar el mensaje.' }
+    const staged = await runGit(workspace, ['diff', '--staged'])
+    const unstaged = await runGit(workspace, ['diff'])
+    const diff = (staged.out || unstaged.out).slice(0, 12000)
+    if (!diff.trim()) return { ok: false, error: 'No hay cambios que commitear.' }
+    const model = (prov.models || []).find((m) => !/image/i.test(m)) || prov.models?.[0]
+    const text = await simpleChat(
+      settings, prov.id, model,
+      'Eres un experto en Git. Genera un mensaje de commit CONVENCIONAL y conciso en español (tipo: asunto en imperativo, máx. 70 caracteres, sin firmas ni markdown). Devuelve SOLO el mensaje.',
+      'Diff:\n' + diff
+    )
+    return { ok: true, message: text.trim().split('\n')[0] }
+  } catch (e) {
+    return { ok: false, error: e.message }
+  }
+})
+
+// ---------- MCP ----------
+
+ipcMain.handle('mcp:list', async () => {
+  const settings = await settingsStore.getSettings(app)
+  return { ok: true, servers: settings.mcp?.servers || [] }
+})
+
+ipcMain.handle('mcp:save', async (_e, servers) => {
+  const settings = await settingsStore.saveSettings(app, { mcp: { servers: Array.isArray(servers) ? servers : [] } })
+  agent.clearMcpCache()
+  mcp.stopAll()
+  return { ok: true, servers: settings.mcp?.servers || [], settings }
+})
+
+ipcMain.handle('mcp:tools', async (_e, server) => {
+  if (!server?.command) return { ok: false, error: 'Falta el comando del servidor' }
+  try {
+    const sid = agent.mcpServerId(server.id || server.name)
+    const tools = await mcp.listTools(sid, server)
+    return { ok: true, tools }
+  } catch (e) {
+    return { ok: false, error: e.message }
+  }
+})
+
+ipcMain.handle('mcp:stopAll', () => {
+  mcp.stopAll()
+  return { ok: true }
+})
+
+// ---------- Búsqueda grep ----------
+
+ipcMain.handle('workspace:grep', async (_e, { workspace, pattern, rel, maxResults }) => {
+  try {
+    if (!pattern) return { ok: true, results: [] }
+    const root = path.resolve(workspace)
+    const base = rel ? path.resolve(root, rel) : root
+    let re
+    try { re = new RegExp(pattern, 'i') } catch { return { ok: false, error: 'Expresión regular inválida' } }
+    const SKIP = /node_modules|\.git[\\/]|dist[\\/]|build[\\/]|out[\\/]|__pycache__|\.next[\\/]|\.vite[\\/]|coverage[\\/]|package-lock|pnpm-lock|yarn\.lock/i
+    const limit = maxResults || 200
+    const results = []
+    const walk = (dir) => {
+      if (results.length >= limit) return
+      let entries
+      try { entries = fs.readdirSync(dir, { withFileTypes: true }) } catch { return }
+      for (const e of entries) {
+        if (results.length >= limit) return
+        const full = path.join(dir, e.name)
+        const relp = path.relative(root, full).split(path.sep).join('/')
+        if (SKIP.test(relp)) continue
+        if (e.isDirectory()) walk(full)
+        else if (e.isFile()) {
+          try {
+            const stat = fs.statSync(full)
+            if (stat.size > 2 * 1024 * 1024) continue
+            const lines = fs.readFileSync(full, 'utf8').split('\n')
+            for (let i = 0; i < lines.length; i++) {
+              if (re.test(lines[i])) {
+                results.push({ path: relp, line: i + 1, text: lines[i].trim().slice(0, 300) })
+                if (results.length >= limit) return
+              }
+            }
+          } catch { }
+        }
+      }
+    }
+    walk(base)
+    return { ok: true, results }
+  } catch (e) {
+    return { ok: false, error: e.message }
+  }
+})
+
+// ---------- Checkpoints ----------
+
+function checkpointDir() {
+  return path.join(app.getPath('userData'), 'checkpoints')
+}
+
+ipcMain.handle('agent:createCheckpoint', async (_e, { workspace, files }) => {
+  try {
+    if (!workspace || !files?.length) return { ok: false, error: 'Faltan datos' }
+    const id = 'cp_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
+    const dir = path.join(checkpointDir(), id)
+    const meta = []
+    for (const f of files) {
+      const target = agent.safeResolve(workspace, f)
+      if (!fs.existsSync(target)) { meta.push({ path: f, existed: false }); continue }
+      const dest = path.join(dir, ...f.split('/'))
+      fs.mkdirSync(path.dirname(dest), { recursive: true })
+      fs.copyFileSync(target, dest)
+      meta.push({ path: f, existed: true })
+    }
+    fs.writeFileSync(path.join(dir, 'meta.json'), JSON.stringify({ workspace, files: meta }, null, 2))
+    return { ok: true, id }
+  } catch (e) {
+    return { ok: false, error: e.message }
+  }
+})
+
+ipcMain.handle('agent:restoreCheckpoint', async (_e, { id }) => {
+  try {
+    const dir = path.join(checkpointDir(), id)
+    if (!fs.existsSync(path.join(dir, 'meta.json'))) return { ok: false, error: 'Checkpoint no encontrado' }
+    const meta = JSON.parse(fs.readFileSync(path.join(dir, 'meta.json'), 'utf8'))
+    for (const m of meta.files) {
+      const target = agent.safeResolve(meta.workspace, m.path)
+      if (m.existed) {
+        const src = path.join(dir, ...m.path.split('/'))
+        fs.mkdirSync(path.dirname(target), { recursive: true })
+        fs.copyFileSync(src, target)
+      } else {
+        fs.rmSync(target, { force: true })
+      }
+    }
+    return { ok: true, files: meta.files.map((m) => m.path) }
+  } catch (e) {
+    return { ok: false, error: e.message }
+  }
+})
+
+ipcMain.handle('agent:selfWorkspace', () => ({
+  ok: true,
+  path: path.join(__dirname, '..')
+}))
+
+const projectBase = () => path.join(app.getPath('userData'), 'projects')
+
+ipcMain.handle('project:list', () => {
+  try {
+    return { ok: true, projects: projects.listProjects(projectBase()) }
+  } catch (e) {
+    return { ok: false, error: e.message }
+  }
+})
+
+ipcMain.handle('project:create', (_e, name) => {
+  try {
+    const clean = String(name || '').trim().replace(/[\\/:*?"<>|]/g, '-').slice(0, 80)
+    if (!clean) return { ok: false, error: 'Nombre inválido' }
+    const base = projectBase()
+    fs.mkdirSync(path.join(base, clean), { recursive: true })
+    projects.writeIndex(base, clean, { files: [] })
+    return { ok: true, project: { id: clean, name: clean, files: 0, chunks: 0, updatedAt: Date.now() } }
+  } catch (e) {
+    return { ok: false, error: e.message }
+  }
+})
+
+ipcMain.handle('project:delete', (_e, id) => {
+  try {
+    projects.deleteProject(projectBase(), id)
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: e.message }
+  }
+})
+
+ipcMain.handle('project:pickFiles', async (e) => {
+  const win = BrowserWindow.fromWebContents(e.sender)
+  const r = await dialog.showOpenDialog(win, {
+    title: 'Añadir archivos al proyecto de conocimiento',
+    properties: ['openFile', 'multiSelections']
+  })
+  return r.canceled ? [] : r.filePaths
+})
+
+ipcMain.handle('project:addFiles', async (_e, { id, paths }) => {
+  try {
+    const added = await projects.addFiles(projectBase(), id, paths || [])
+    return { ok: true, added }
+  } catch (e) {
+    return { ok: false, error: e.message }
+  }
+})
+
+ipcMain.handle('project:removeFile', (_e, { id, fileName }) => {
+  try {
+    projects.removeFile(projectBase(), id, fileName)
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: e.message }
+  }
+})
+
+ipcMain.handle('project:search', (_e, { id, query, topK }) => {
+  try {
+    return { ok: true, results: projects.search(projectBase(), id, String(query || ''), topK || 5) }
+  } catch (e) {
+    return { ok: false, error: e.message }
+  }
+})
+
+ipcMain.handle('project:index', (_e, id) => {
+  try {
+    const index = projects.readIndex(projectBase(), id)
+    return { ok: true, files: index.files.map((f) => ({ name: f.name, chunks: f.chunks.length })) }
+  } catch (e) {
+    return { ok: false, error: e.message }
+  }
+})
 
 ipcMain.handle('fs:listDir', (_e, { workspace, rel }) => {
   try {
@@ -427,6 +875,111 @@ ipcMain.handle('websearch:query', async (_e, q) => {
 })
 
 ipcMain.handle('file:extract', async (_e, p) => fileExtract.extract(p))
+
+ipcMain.handle('workspace:readFile', async (_e, { workspace, rel }) => {
+  try {
+    const fs = require('fs')
+    const path = require('path')
+    const agent = require('./agent')
+    const full = agent.safeResolve(workspace, rel)
+    const stat = fs.statSync(full)
+    if (!stat.isFile()) return { ok: false, error: 'No es un archivo' }
+    if (stat.size > 2 * 1024 * 1024) return { ok: false, error: 'Archivo demasiado grande para @mención (máx. 2 MB)' }
+    const text = fs.readFileSync(full, 'utf8')
+    return { ok: true, name: path.basename(rel), path: rel, text, size: stat.size }
+  } catch (e) {
+    return { ok: false, error: e.message }
+  }
+})
+
+ipcMain.handle('workspace:listFiles', async (_e, { workspace, rel, pattern }) => {
+  try {
+    const fs = require('fs')
+    const path = require('path')
+    const agent = require('./agent')
+    const dir = agent.safeResolve(workspace, rel || '.')
+    const entries = fs.readdirSync(dir, { withFileTypes: true })
+      .filter((e) => !e.name.startsWith('.git') && e.name !== 'node_modules' && e.name !== 'dist' && e.name !== 'build')
+      .map((e) => {
+        const full = path.join(dir, e.name)
+        let size = 0
+        if (e.isFile()) {
+          try { size = fs.statSync(full).size } catch { }
+        }
+        return { name: e.name, dir: e.isDirectory(), size, rel: rel ? `${rel}/${e.name}` : e.name }
+      })
+      .sort((a, b) => (a.dir === b.dir ? a.name.localeCompare(b.name) : a.dir ? -1 : 1))
+    if (pattern) {
+      const regex = new RegExp(pattern.replace(/\*/g, '.*'), 'i')
+      return { ok: true, entries: entries.filter((e) => regex.test(e.name)) }
+    }
+    return { ok: true, entries }
+  } catch (e) {
+    return { ok: false, error: e.message }
+  }
+})
+
+ipcMain.handle('workspace:readFolder', async (_e, { workspace, rel, maxFiles = 20 }) => {
+  try {
+    const fs = require('fs')
+    const path = require('path')
+    const agent = require('./agent')
+    const dir = agent.safeResolve(workspace, rel || '.')
+    const results = []
+    function walk(d, base) {
+      if (results.length >= maxFiles) return
+      const entries = fs.readdirSync(d, { withFileTypes: true })
+      for (const e of entries) {
+        if (results.length >= maxFiles) break
+        if (e.name.startsWith('.git') || e.name === 'node_modules' || e.name === 'dist' || e.name === 'build') continue
+        const full = path.join(d, e.name)
+        const relPath = base ? `${base}/${e.name}` : e.name
+        if (e.isDirectory()) {
+          walk(full, relPath)
+        } else {
+          try {
+            const stat = fs.statSync(full)
+            if (stat.size <= 500 * 1024) {
+              const text = fs.readFileSync(full, 'utf8')
+              results.push({ name: e.name, path: relPath, text, size: stat.size })
+            }
+          } catch { }
+        }
+      }
+    }
+    walk(dir, rel || '')
+    return { ok: true, files: results }
+  } catch (e) {
+    return { ok: false, error: e.message }
+  }
+})
+
+ipcMain.handle('workspace:readRules', async (_e, { workspace }) => {
+  try {
+    const fs = require('fs')
+    const path = require('path')
+    const agent = require('./agent')
+    const rulesPath = path.join(workspace, '.novarules')
+    if (!fs.existsSync(rulesPath)) return { ok: true, rules: '' }
+    const text = fs.readFileSync(rulesPath, 'utf8')
+    return { ok: true, rules: text }
+  } catch (e) {
+    return { ok: false, error: e.message }
+  }
+})
+
+ipcMain.handle('workspace:writeRules', async (_e, { workspace, rules }) => {
+  try {
+    const fs = require('fs')
+    const path = require('path')
+    const agent = require('./agent')
+    const rulesPath = path.join(workspace, '.novarules')
+    fs.writeFileSync(rulesPath, rules, 'utf8')
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: e.message }
+  }
+})
 
 ipcMain.handle('export:text', async (e, { defaultName, content }) => {
   try {

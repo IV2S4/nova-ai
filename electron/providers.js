@@ -11,8 +11,8 @@ const PROVIDER_DEFS = [
     keyPath: 'providers.openai.apiKey', keyName: 'OPENAI_API_KEY',
     vision: ['*'],
     reasoning: ['o3', 'o3-mini'],
-    imageModels: ['gpt-image-2', 'gpt-image-1', 'dall-e-3'],
-    models: ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5', 'gpt-5.5-pro', 'gpt-5.4', 'gpt-5.4-pro', 'gpt-5.4-mini', 'gpt-5.4-nano', 'gpt-5', 'gpt-4.1', 'gpt-4.1-mini', 'gpt-4.1-nano', 'gpt-4o', 'gpt-4o-mini', 'o3', 'o3-mini', 'gpt-image-2', 'gpt-image-1', 'dall-e-3'],
+    imageModels: ['gpt-image-2', 'gpt-image-1'],
+    models: ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5', 'gpt-5.5-pro', 'gpt-5.4', 'gpt-5.4-pro', 'gpt-5.4-mini', 'gpt-5.4-nano', 'gpt-5', 'gpt-4.1', 'gpt-4.1-mini', 'gpt-4.1-nano', 'gpt-4o', 'gpt-4o-mini', 'o3', 'o3-mini', 'gpt-image-2', 'gpt-image-1'],
     docs: 'https://platform.openai.com/api-keys'
   },
   {
@@ -26,6 +26,7 @@ const PROVIDER_DEFS = [
   {
     id: 'openrouter', name: 'OpenRouter (¡todos los modelos!)', color: '#8b5cf6',
     keyPath: 'providers.openrouter.apiKey', keyName: 'OPENROUTER_API_KEY',
+    base: 'https://openrouter.ai/api/v1',
     vision: true, live: true,
     models: [],
     docs: 'https://openrouter.ai/keys'
@@ -197,7 +198,7 @@ async function testProvider(settings, providerId) {
     } else if (def.id === 'google') {
       res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(cfg.apiKey)}`, { signal: AbortSignal.timeout(10000) })
     } else if (def.id === 'openrouter') {
-      res = await fetch('https://openrouter.ai/api/v1/models', {
+      res = await fetch('https://openrouter.ai/api/v1/auth/key', {
         headers: { Authorization: `Bearer ${cfg.apiKey}` },
         signal: AbortSignal.timeout(10000)
       })
@@ -293,7 +294,10 @@ async function* streamAnthropic(cfg, req, msgs, signal) {
       }
       return { role: m.role, content: parts }
     })
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
+  const budgetMap = { bajo: 2048, medio: 8192, alto: 16384 }
+  const thinkingBudget = req.reasoningEffort ? budgetMap[req.reasoningEffort] : (req.showThinking ? 8192 : undefined)
+
+  const send = (withThinking) => fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
       'x-api-key': cfg.apiKey,
@@ -306,22 +310,47 @@ async function* streamAnthropic(cfg, req, msgs, signal) {
       temperature: req.temperature ?? 0.7,
       system: system || undefined,
       messages: content,
-      stream: true
+      stream: true,
+      ...(withThinking ? { thinking: { type: 'enabled', budget_tokens: thinkingBudget } } : {})
     }),
     signal
   })
+
+  const consume = (res) => (async function* () {
+    for await (const { json, done } of readSSE(res)) {
+      if (done) break
+      if (json.type === 'content_block_delta' && json.delta?.type === 'thinking_delta') {
+        if (req.showThinking) yield { type: 'reasoning', text: json.delta.thinking || '' }
+      } else if (json.type === 'content_block_delta' && json.delta?.type === 'text_delta') {
+        yield { type: 'chunk', text: json.delta.text }
+      } else if (json.type === 'error') {
+        throw new Error(json.error?.message || 'Error de Anthropic')
+      }
+    }
+    yield { type: 'done' }
+  })()
+
+  let res = await send(!!thinkingBudget)
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    if (thinkingBudget && /thinking|budget|400/i.test(err.error?.message || '')) {
+      res = await send(false)
+    } else {
+      throw new Error(err.error?.message || `Error HTTP ${res.status}`)
+    }
+  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({}))
     throw new Error(err.error?.message || `Error HTTP ${res.status}`)
   }
-  for await (const { json } of readSSE(res)) {
-    if (json.type === 'content_block_delta' && json.delta?.type === 'text_delta') {
-      yield { type: 'chunk', text: json.delta.text }
-    } else if (json.type === 'error') {
-      throw new Error(json.error?.message || 'Error de Anthropic')
-    }
+  try {
+    yield* consume(res)
+  } catch (e) {
+    if (!thinkingBudget) throw e
+    const retry = await send(false)
+    if (!retry.ok) throw e
+    yield* consume(retry)
   }
-  yield { type: 'done' }
 }
 
 async function* streamGoogle(cfg, req, msgs, signal) {
@@ -343,8 +372,10 @@ async function* streamGoogle(cfg, req, msgs, signal) {
   }
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(req.model)}:streamGenerateContent?alt=sse&key=${encodeURIComponent(cfg.apiKey)}`
   const isGemini3 = /^gemini-3/.test(req.model)
+  const budgetMap = { bajo: 1024, medio: 8192, alto: 16384 }
+  const thinkingBudget = req.reasoningEffort ? budgetMap[req.reasoningEffort] : (req.showThinking ? 8192 : undefined)
   const generationConfig = isGemini3
-    ? { maxOutputTokens: 8192 }
+    ? { maxOutputTokens: 8192, ...(thinkingBudget ? { thinkingConfig: { thinkingBudget, includeThoughts: !!req.showThinking } } : {}) }
     : { temperature: req.temperature ?? 0.7, maxOutputTokens: 8192 }
   const res = await fetch(url, {
     method: 'POST',
@@ -360,9 +391,16 @@ async function* streamGoogle(cfg, req, msgs, signal) {
     const err = await res.json().catch(() => ({}))
     throw new Error(err.error?.message || `Error HTTP ${res.status}`)
   }
-  for await (const { json } of readSSE(res)) {
-    const text = json.candidates?.[0]?.content?.parts?.map((p) => p.text).join('') || ''
-    if (text) yield { type: 'chunk', text }
+  for await (const { json, done } of readSSE(res)) {
+    if (done) break
+    const parts = json.candidates?.[0]?.content?.parts || []
+    for (const p of parts) {
+      if (p.thought) {
+        if (req.showThinking) yield { type: 'reasoning', text: p.thought }
+      } else if (p.text) {
+        yield { type: 'chunk', text: p.text }
+      }
+    }
   }
   yield { type: 'done' }
 }
@@ -420,6 +458,8 @@ async function* streamOpenAICompat(cfg, def, req, msgs, signal) {
   const isNewGen = /^(gpt-5|o3)/.test(req.model)
   const noTemp = isNewGen || isReasoning || def.id === 'deepseek'
   const maxKey = isNewGen || isReasoning ? 'max_completion_tokens' : 'max_tokens'
+  const effortMap = { bajo: 'low', medio: 'medium', alto: 'high' }
+  const effort = isNewGen ? effortMap[req.reasoningEffort] : undefined
 
   const buildBody = (ms) => ({
     model: req.model,
@@ -434,6 +474,7 @@ async function* streamOpenAICompat(cfg, def, req, msgs, signal) {
     })),
     stream: true,
     [maxKey]: 8192,
+    ...(effort ? { reasoning_effort: effort } : {}),
     ...(noTemp ? {} : { temperature: req.temperature ?? 0.7 })
   })
 
@@ -459,7 +500,9 @@ async function* streamOpenAICompat(cfg, def, req, msgs, signal) {
     for await (const { json, done } of readSSE(res)) {
       if (done) break
       const delta = json.choices?.[0]?.delta || {}
-      const text = delta.content || delta.reasoning_content || ''
+      const text = delta.content || ''
+      const reason = delta.reasoning_content || ''
+      if (reason && req.showThinking) yield { type: 'reasoning', text: reason }
       if (text) {
         emitted = true
         yield { type: 'chunk', text }
@@ -474,7 +517,9 @@ async function* streamOpenAICompat(cfg, def, req, msgs, signal) {
     for await (const { json, done } of readSSE(res)) {
       if (done) break
       const delta = json.choices?.[0]?.delta || {}
-      const text = delta.content || delta.reasoning_content || ''
+      const text = delta.content || ''
+      const reason = delta.reasoning_content || ''
+      if (reason && req.showThinking) yield { type: 'reasoning', text: reason }
       if (text) yield { type: 'chunk', text }
     }
   } else if (firstError) {
@@ -535,7 +580,8 @@ async function* streamGeminiImage(cfg, req, msgs, signal) {
   }
   let n = 0
   let gotImage = false
-  for await (const { json } of readSSE(res)) {
+  for await (const { json, done } of readSSE(res)) {
+    if (done) break
     if (json.error) throw new Error(json.error.message || 'Error de Gemini')
     const parts = json.candidates?.[0]?.content?.parts || []
     for (const p of parts) {

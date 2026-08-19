@@ -5,6 +5,7 @@ const { getConfig, PROVIDER_DEFS } = require('./providers')
 const websearch = require('./websearch')
 const { findRelevantSkills } = require('./skills')
 const memory = require('./memory')
+const mcp = require('./mcp')
 
 const MAX_ITERS = 25
 const MAX_OUTPUT = 30000
@@ -128,6 +129,79 @@ function safeResolve(workspace, rel) {
   return target
 }
 
+function mcpServerId(id) {
+  return String(id || '').replace(/[^a-zA-Z0-9_-]/g, '-')
+}
+
+function mcpTools(settings) {
+  const servers = settings?.mcp?.servers || []
+  const out = []
+  for (const s of servers) {
+    if (!s.enabled || !s.command) continue
+    const sid = mcpServerId(s.id || s.name)
+    const cached = mcpToolCache.get(sid)
+    const tools = cached || []
+    if (!cached) {
+      mcp.listTools(sid, s).then((ts) => {
+        mcpToolCache.set(sid, ts)
+      }).catch(() => {})
+    }
+    for (const t of tools) {
+      out.push({
+        type: 'function',
+        function: {
+          name: `mcp_${sid}__${t.name}`,
+          description: `[MCP ${s.name}] ${t.description || 'Herramienta del servidor MCP'}`,
+          parameters: t.inputSchema || { type: 'object', properties: {} }
+        }
+      })
+    }
+  }
+  return out
+}
+
+const mcpToolCache = new Map()
+
+function buildTools(settings) {
+  return [...TOOLS, ...mcpTools(settings)]
+}
+
+async function execMcpTool(fullName, args, settings) {
+  const rest = fullName.slice(4)
+  const sep = rest.indexOf('__')
+  if (sep === -1) throw new Error('Herramienta MCP mal formada')
+  const sid = rest.slice(0, sep)
+  const toolName = rest.slice(sep + 2)
+  const servers = settings?.mcp?.servers || []
+  const server = servers.find((s) => mcpServerId(s.id || s.name) === sid)
+  if (!server) throw new Error(`Servidor MCP no encontrado: ${sid}`)
+  return mcp.callTool(sid, server, toolName, args)
+}
+
+function diffLines(oldStr, newStr) {
+  const a = (oldStr || '').split('\n')
+  const b = (newStr || '').split('\n')
+  const n = a.length
+  const m = b.length
+  const dp = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0))
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1])
+    }
+  }
+  const out = []
+  let i = 0
+  let j = 0
+  while (i < n && j < m) {
+    if (a[i] === b[j]) { out.push('  ' + a[i]); i++; j++ }
+    else if (dp[i + 1][j] >= dp[i][j + 1]) { out.push('- ' + a[i]); i++ }
+    else { out.push('+ ' + b[j]); j++ }
+  }
+  while (i < n) { out.push('- ' + a[i]); i++ }
+  while (j < m) { out.push('+ ' + b[j]); j++ }
+  return out.slice(0, 500).join('\n')
+}
+
 const runningProcs = new Map()
 
 function forceKill(child) {
@@ -196,7 +270,7 @@ function runCommandStream(cwd, command, toolId, signal) {
   })
 }
 
-async function* runToolStream(name, args, workspace, toolId, signal, settings) {
+async function* runToolStream(name, args, workspace, toolId, signal, settings, state) {
   try {
     switch (name) {
       case 'run_command': {
@@ -226,29 +300,57 @@ async function* runToolStream(name, args, workspace, toolId, signal, settings) {
       }
       case 'write_file': {
         const p = safeResolve(workspace, args.path)
+        const newContent = String(args.content ?? '')
+        const existed = fs.existsSync(p)
+        const oldContent = existed ? fs.readFileSync(p, 'utf8') : null
+        if (state?.plan) {
+          const proposal = {
+            id: 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+            action: 'write', path: args.path, oldExisted: existed,
+            oldContent, newContent, diff: diffLines(oldContent || '', newContent)
+          }
+          state.proposals = state.proposals || []
+          state.proposals.push(proposal)
+          yield { type: 'proposal', proposal }
+          yield { type: 'result', result: { ok: true, output: `[PLAN] Propuesta registrada para ${path.relative(workspace, p)} (no se ha guardado). El usuario debe aprobarla para aplicarla.` } }
+          return
+        }
         fs.mkdirSync(path.dirname(p), { recursive: true })
-        fs.writeFileSync(p, String(args.content ?? ''), 'utf8')
+        fs.writeFileSync(p, newContent, 'utf8')
         yield { type: 'result', result: { ok: true, output: `Archivo guardado: ${path.relative(workspace, p)}` } }
         return
       }
       case 'edit_file': {
         const p = safeResolve(workspace, args.path)
-        let src = fs.readFileSync(p, 'utf8')
+        const src = fs.readFileSync(p, 'utf8')
         const edits = Array.isArray(args.edits) ? args.edits : []
         if (!edits.length) throw new Error('No se proporcionaron ediciones')
+        let next = src
         let applied = 0
         for (const ed of edits) {
           const oldText = String(ed.oldText ?? '')
           const newText = String(ed.newText ?? '')
           if (!oldText) throw new Error('Edit con oldText vacío')
-          const idx = src.indexOf(oldText)
+          const idx = next.indexOf(oldText)
           if (idx === -1) throw new Error(`Texto no encontrado en ${path.relative(workspace, p)}: "${oldText.slice(0, 80)}..."`)
-          const dup = src.indexOf(oldText, idx + 1)
+          const dup = next.indexOf(oldText, idx + 1)
           if (dup !== -1) throw new Error(`El texto aparece varias veces en ${path.relative(workspace, p)}; incluye más contexto: "${oldText.slice(0, 80)}..."`)
-          src = src.slice(0, idx) + newText + src.slice(idx + oldText.length)
+          next = next.slice(0, idx) + newText + next.slice(idx + oldText.length)
           applied++
         }
-        fs.writeFileSync(p, src, 'utf8')
+        if (state?.plan) {
+          const proposal = {
+            id: 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+            action: 'edit', path: args.path, oldExisted: true,
+            oldContent: src, newContent: next, diff: diffLines(src, next)
+          }
+          state.proposals = state.proposals || []
+          state.proposals.push(proposal)
+          yield { type: 'proposal', proposal }
+          yield { type: 'result', result: { ok: true, output: `[PLAN] Propuesta registrada: ${applied} edición(es) en ${path.relative(workspace, p)} (no se ha guardado). El usuario debe aprobarla.` } }
+          return
+        }
+        fs.writeFileSync(p, next, 'utf8')
         yield { type: 'result', result: { ok: true, output: `${applied} edición(es) aplicada(s) en ${path.relative(workspace, p)}` } }
         return
       }
@@ -257,8 +359,14 @@ async function* runToolStream(name, args, workspace, toolId, signal, settings) {
         yield { type: 'result', result: { ok: true, output: res ? res.slice(0, MAX_OUTPUT) : 'Sin resultados' } }
         return
       }
-      default:
+      default: {
+        if (name.startsWith('mcp_')) {
+          const r = await execMcpTool(name, args, settings)
+          yield { type: 'result', result: r }
+          return
+        }
         throw new Error('Herramienta desconocida: ' + name)
+      }
     }
   } catch (e) {
     yield { type: 'result', result: { ok: false, output: '', error: String(e.message || e).slice(0, 1200) } }
@@ -285,44 +393,52 @@ async function* readSSE(res) {
   }
 }
 
-async function collectOpenAIDelta(res) {
-  const toolCalls = []
+async function* streamOpenAIDelta(res, acc) {
   let content = ''
-  for await (const { json } of readSSE(res)) {
+  for await (const { json, done } of readSSE(res)) {
+    if (done) return content
     const delta = json.choices?.[0]?.delta || {}
-    if (delta.content) content += delta.content
+    if (delta.reasoning_content) yield { type: 'thinking', text: delta.reasoning_content }
+    if (delta.content) {
+      content += delta.content
+      yield { type: 'text', text: delta.content }
+    }
     for (const tc of delta.tool_calls || []) {
       const i = tc.index || 0
-      toolCalls[i] = toolCalls[i] || { id: '', name: '', arguments: '' }
-      if (tc.id) toolCalls[i].id = tc.id
-      if (tc.function?.name) toolCalls[i].name += tc.function.name
-      if (tc.function?.arguments) toolCalls[i].arguments += tc.function.arguments
+      acc.toolCalls[i] = acc.toolCalls[i] || { id: '', name: '', arguments: '' }
+      if (tc.id) acc.toolCalls[i].id = tc.id
+      if (tc.function?.name) acc.toolCalls[i].name += tc.function.name
+      if (tc.function?.arguments) acc.toolCalls[i].arguments += tc.function.arguments
     }
   }
-  return { content, toolCalls }
+  return content
 }
 
-async function collectAnthropicDelta(res) {
+async function* streamAnthropicDelta(res, acc) {
   let content = ''
-  const tools = []
-  for await (const { json } of readSSE(res)) {
+  for await (const { json, done } of readSSE(res)) {
+    if (done) return content
     if (json.type === 'content_block_start' && json.content_block?.type === 'tool_use') {
-      tools[json.index] = { id: json.content_block.id, name: json.content_block.name, input: '' }
+      acc.tools[json.index] = { id: json.content_block.id, name: json.content_block.name, input: '' }
     } else if (json.type === 'content_block_delta') {
-      if (json.delta?.type === 'text_delta') content += json.delta.text || ''
-      else if (json.delta?.type === 'input_json_delta') {
-        tools[json.index] = tools[json.index] || { id: '', name: '', input: '' }
-        tools[json.index].input += json.delta.partial_json || ''
+      if (json.delta?.type === 'text_delta') {
+        content += json.delta.text || ''
+        yield { type: 'text', text: json.delta.text || '' }
+      } else if (json.delta?.type === 'thinking_delta') {
+        yield { type: 'thinking', text: json.delta.thinking || '' }
+      } else if (json.delta?.type === 'input_json_delta') {
+        acc.tools[json.index] = acc.tools[json.index] || { id: '', name: '', input: '' }
+        acc.tools[json.index].input += json.delta.partial_json || ''
       }
     } else if (json.type === 'error') {
       throw new Error(json.error?.message || 'Error de Anthropic')
     }
   }
-  return { content, tools }
+  return content
 }
 
-function anthropicTools() {
-  return TOOLS.map((t) => ({
+function anthropicTools(settings) {
+  return buildTools(settings).map((t) => ({
     name: t.function.name,
     description: t.function.description,
     input_schema: t.function.parameters
@@ -336,7 +452,7 @@ async function* runAgentOpenAI(cfg, def, msgs, signal, workspace, settings, stat
     const body = {
       model: msgs._model,
       messages: msgs.messages,
-      tools: TOOLS,
+      tools: buildTools(settings),
       stream: true,
       ...(isNewGen ? { max_completion_tokens: 8192 } : { max_tokens: 8192 })
     }
@@ -344,14 +460,19 @@ async function* runAgentOpenAI(cfg, def, msgs, signal, workspace, settings, stat
       method: 'POST',
       headers: { 'content-type': 'application/json', ...(cfg.apiKey ? { Authorization: `Bearer ${cfg.apiKey}` } : {}) },
       body: JSON.stringify(body),
-      signal
+      signal: AbortSignal.any([signal, AbortSignal.timeout(300000)])
     })
     if (!res.ok) {
       const err = await res.json().catch(() => ({}))
       throw new Error(err.error?.message || `Error HTTP ${res.status}`)
     }
-    const { content, toolCalls } = await collectOpenAIDelta(res)
-    if (content) yield { type: 'text', text: content }
+    const acc = { toolCalls: [] }
+    let content = ''
+    for await (const ev of streamOpenAIDelta(res, acc)) {
+      if (ev.type === 'thinking') yield { type: 'thinking', text: ev.text }
+      else { content += ev.text; yield { type: 'text', text: ev.text } }
+    }
+    const toolCalls = acc.toolCalls
     if (!toolCalls.length) { yield { type: 'done' }; return }
 
     msgs.messages.push({
@@ -372,8 +493,9 @@ async function* runAgentOpenAI(cfg, def, msgs, signal, workspace, settings, stat
 
 async function* execTool(name, args, toolId, signal, workspace, settings, state) {
   state.lastTool = null
-  for await (const ev of runToolStream(name, args, workspace, toolId, signal, settings)) {
+  for await (const ev of runToolStream(name, args, workspace, toolId, signal, settings, state)) {
     if (ev.type === 'chunk') yield { type: 'tool_output', id: toolId, chunk: ev.text }
+    else if (ev.type === 'proposal') yield { type: 'proposal', proposal: ev.proposal }
     else if (ev.type === 'result') {
       state.lastTool = ev.result
       yield { type: 'tool_result', id: toolId, name, ok: ev.result.ok, output: ev.result.output || '', error: ev.result.error || '' }
@@ -393,17 +515,22 @@ async function* runAgentAnthropic(cfg, msgs, signal, workspace, settings, state)
         max_tokens: 8192,
         system: system || undefined,
         messages: conv,
-        tools: anthropicTools(),
+        tools: anthropicTools(settings),
         stream: true
       }),
-      signal
+      signal: AbortSignal.any([signal, AbortSignal.timeout(300000)])
     })
     if (!res.ok) {
       const err = await res.json().catch(() => ({}))
       throw new Error(err.error?.message || `Error HTTP ${res.status}`)
     }
-    const { content, tools } = await collectAnthropicDelta(res)
-    if (content) yield { type: 'text', text: content }
+    const acc = { tools: [] }
+    let content = ''
+    for await (const ev of streamAnthropicDelta(res, acc)) {
+      if (ev.type === 'thinking') yield { type: 'thinking', text: ev.text }
+      else { content += ev.text; yield { type: 'text', text: ev.text } }
+    }
+    const tools = acc.tools
     if (!tools.length) { yield { type: 'done' }; return }
 
     const parsed = tools.map((t) => {
@@ -427,12 +554,16 @@ async function* runAgentAnthropic(cfg, msgs, signal, workspace, settings, state)
   throw new Error('Demasiados pasos de agente (límite alcanzado). Detén la tarea y simplifícala.')
 }
 
-function geminiTools() {
+function geminiTools(settings) {
   return [{
-    functionDeclarations: TOOLS.map((t) => ({
+    functionDeclarations: buildTools(settings).map((t) => ({
       name: t.function.name,
       description: t.function.description,
-      parameters: t.function.parameters
+      parameters: {
+        type: 'object',
+        properties: (t.function.parameters || {}).properties || {},
+        required: (t.function.parameters || {}).required || []
+      }
     }))
   }]
 }
@@ -460,20 +591,24 @@ function msgsToGemini(messages) {
   return { system, contents }
 }
 
-async function collectGeminiDelta(res) {
+async function* streamGeminiDelta(res, acc) {
   let text = ''
-  const calls = []
-  for await (const { json } of readSSE(res)) {
+  for await (const { json, done } of readSSE(res)) {
+    if (done) return text
     const parts = json?.candidates?.[0]?.content?.parts || []
     for (const p of parts) {
-      if (p.text) text += p.text
-      else if (p.functionCall) calls.push({ name: p.functionCall.name, args: p.functionCall.args || {} })
+      if (p.thought) yield { type: 'thinking', text: p.text || '' }
+      else if (p.text) {
+        text += p.text
+        yield { type: 'text', text: p.text }
+      }
+      else if (p.functionCall) acc.calls.push({ name: p.functionCall.name, args: p.functionCall.args || {} })
     }
     if (json?.promptFeedback?.blockReason) {
       throw new Error('Petición bloqueada por Gemini: ' + json.promptFeedback.blockReason)
     }
   }
-  return { text, calls }
+  return text
 }
 
 async function* runAgentGemini(cfg, msgs, signal, workspace, settings, state) {
@@ -482,7 +617,7 @@ async function* runAgentGemini(cfg, msgs, signal, workspace, settings, state) {
     const body = {
       contents,
       systemInstruction: system ? { parts: [{ text: system }] } : undefined,
-      tools: geminiTools(),
+      tools: geminiTools(settings),
       generationConfig: { maxOutputTokens: 8192 }
     }
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(msgs._model)}:streamGenerateContent?alt=sse&key=${encodeURIComponent(cfg.apiKey)}`
@@ -490,14 +625,19 @@ async function* runAgentGemini(cfg, msgs, signal, workspace, settings, state) {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
-      signal
+      signal: AbortSignal.any([signal, AbortSignal.timeout(300000)])
     })
     if (!res.ok) {
       const err = await res.json().catch(() => ({}))
       throw new Error(err?.error?.message || `Error HTTP ${res.status}`)
     }
-    const { text, calls } = await collectGeminiDelta(res)
-    if (text) yield { type: 'text', text }
+    const acc = { calls: [] }
+    let text = ''
+    for await (const ev of streamGeminiDelta(res, acc)) {
+      if (ev.type === 'thinking') yield { type: 'thinking', text: ev.text }
+      else { text += ev.text; yield { type: 'text', text: ev.text } }
+    }
+    const calls = acc.calls
     if (!calls.length) { yield { type: 'done' }; return }
 
     msgs.messages.push({ role: 'assistant', content: text || '', functionCalls: calls })
@@ -520,7 +660,35 @@ async function* runAgent(settings, req, signal) {
   if (!req.workspace || !fs.existsSync(req.workspace)) {
     throw new Error('Primero elige la carpeta de tu proyecto (botón "Elegir proyecto").')
   }
-  let system = buildSystemPrompt(req.prompt, req.skills, req.context)
+
+  let rules = ''
+  try {
+    const rulesPath = path.join(req.workspace, '.novarules')
+    if (fs.existsSync(rulesPath)) {
+      rules = fs.readFileSync(rulesPath, 'utf8')
+    }
+  } catch { }
+
+  let context = req.context
+  if (context && context.length > 20000) {
+    const summary = await compactContext(settings, req, context)
+    if (summary) {
+      context = summary
+      yield { type: 'compact', text: summary }
+    } else {
+      context = context.slice(0, 20000) + '\n… (contexto truncado)'
+    }
+  }
+
+  let system = buildSystemPrompt(req.prompt, req.skills, context, rules)
+  if (req.plan) {
+    system += `\n\n## MODO PLAN (solo propuestas)
+Estás en modo PLAN. Investiga el proyecto (list_files, read_file, run_command de solo lectura) y cuando quieras crear o modificar un archivo usa write_file o edit_file: aquí NO se guardan en disco, solo se registran como propuestas (diff) que el usuario revisará y aprobará una a una.
+Reglas del modo plan:
+- Prohibido aplicar cambios reales: todo cambio pasa por propuestas.
+- Después de registrar propuestas, termina con un resumen de lo que propones y por qué.
+- No ejecutes comandos que modifiquen el proyecto (build/install OK si son necesarios para inspeccionar, pero no commits ni scripts destructivos).`
+  }
   if (settings?.memory?.enabled) {
     const mem = memory.memoryContext(settings)
     if (mem) system += '\n\n' + mem
@@ -532,15 +700,59 @@ async function* runAgent(settings, req, signal) {
       { role: 'user', content: req.prompt }
     ]
   }
-  const state = { lastTool: null }
+  const state = { lastTool: null, plan: !!req.plan, proposals: [] }
   if (def.id === 'anthropic') yield* runAgentAnthropic(cfg, msgs, signal, req.workspace, settings, state)
   else if (def.id === 'google') yield* runAgentGemini(cfg, msgs, signal, req.workspace, settings, state)
   else yield* runAgentOpenAI(cfg, def, msgs, signal, req.workspace, settings, state)
 }
 
-function buildSystemPrompt(prompt, enabledIds, context) {
+async function compactContext(settings, req, context) {
+  try {
+    const def = PROVIDER_DEFS.find((p) => p.id === req.provider)
+    if (!def) return null
+    const cfg = getConfig(settings)[req.provider]
+    if (!cfg.apiKey && !def.local) return null
+    const msgs = {
+      _model: req.model,
+      messages: [
+        { role: 'system', content: 'Eres un asistente que resume el contexto de sesiones de programación. Devuelve SOLO el resumen en español, conciso (máx. 500 palabras), conservando rutas de archivos, comandos, errores y decisiones técnicas importantes. No añadas comentarios.' },
+        { role: 'user', content: `Resume este contexto de sesión anterior:\n\n${context}` }
+      ]
+    }
+    const state = { lastTool: null, plan: false, proposals: [] }
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), 90000)
+    try {
+      let out = ''
+      if (def.id === 'anthropic') {
+        for await (const ev of runAgentAnthropic(cfg, msgs, ctrl.signal, req.workspace, settings, state)) {
+          if (ev.type === 'text') out += ev.text
+          if (ev.type === 'error') break
+        }
+      } else if (def.id === 'google') {
+        for await (const ev of runAgentGemini(cfg, msgs, ctrl.signal, req.workspace, settings, state)) {
+          if (ev.type === 'text') out += ev.text
+          if (ev.type === 'error') break
+        }
+      } else {
+        for await (const ev of runAgentOpenAI(cfg, def, msgs, ctrl.signal, req.workspace, settings, state)) {
+          if (ev.type === 'text') out += ev.text
+          if (ev.type === 'error') break
+        }
+      }
+      return out.trim() || null
+    } finally {
+      clearTimeout(timer)
+    }
+  } catch {
+    return null
+  }
+}
+
+function buildSystemPrompt(prompt, enabledIds, context, rules) {
   let base = SYSTEM_PROMPT
   if (context) base += `\n\n## Contexto de la sesión anterior (estás RETOMANDO este trabajo)\n${context}\nSigue a partir de donde se quedó: no repitas trabajo ya hecho y termina lo pendiente.`
+  if (rules) base += `\n\n## Reglas del proyecto (.novarules)\n${rules}\nSIGUE ESTAS REGLAS ESTRICTAMENTE en todo tu trabajo.`
   const matched = findRelevantSkills(prompt, enabledIds)
   if (!matched.length) return base
   const block = matched
@@ -549,4 +761,4 @@ function buildSystemPrompt(prompt, enabledIds, context) {
   return `${base}\n\n## Skills activas para esta tarea\nLas siguientes skills coinciden con la petición del usuario. SIGUE SUS INSTRUCCIONES PASO A PASO:\n\n${block}`
 }
 
-module.exports = { runAgent, runToolStream, killTool, killAllTools, safeResolve, TOOLS }
+module.exports = { runAgent, runToolStream, killTool, killAllTools, safeResolve, TOOLS, mcpServerId, clearMcpCache: () => mcpToolCache.clear() }

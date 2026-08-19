@@ -1,13 +1,15 @@
 # Nova AI
 
-Asistente de IA de escritorio para Windows: conversaciones con Claude, GPT, Gemini, Groq, DeepSeek, Mistral, Grok, OpenRouter y modelos locales (Ollama, LM Studio). Incluye comparador de modelos, agente con herramientas, memoria y búsqueda web.
+Asistente de IA de escritorio para Windows: conversaciones con Claude, GPT, Gemini, Groq, DeepSeek, Mistral, Grok, OpenRouter y modelos locales (Ollama, LM Studio). Incluye comparador de modelos, agente con herramientas, memoria, búsqueda web, servers MCP, proyectos de conocimiento y panel Git.
 
 ## Características
 
 - **11 proveedores** con streaming en tiempo real y reintentos automáticos
 - **Comparador**: lanza el mismo mensaje en hasta 4 modelos a la vez
-- **Agente IA**: ejecuta herramientas sobre tu proyecto (leer/escribir archivos, terminal, búsqueda web)
-- **Chat**: auto-títulos, conversaciones fijadas, agrupadas por día, búsqueda (Ctrl+F), imágenes (pegar/arrastrar), matemáticas LaTeX, exportar a HTML
+- **Agente IA**: ejecuta herramientas sobre tu proyecto (leer/escribir archivos, terminal, búsqueda web, grep), modo PLAN con propuestas aprobables, @menciones de archivos, reglas `.novarules`, checkpoints y panel Git (staging, diff, commit con mensaje IA)
+- **Servers MCP**: conecta herramientas externas al agente desde Ajustes
+- **Proyectos de conocimiento**: indexa tus documentos y el agente los consulta por relevancia
+- **Chat**: auto-títulos, conversaciones fijadas, agrupadas por día, búsqueda (Ctrl+F), imágenes (pegar/arrastrar), generación y edición de imágenes con IA, matemáticas LaTeX, exportar a HTML/PDF/Word, paleta de comandos (Ctrl+K)
 - **Memoria**: aprende hechos de tus conversaciones y resume chats largos
 - **Modo claro/oscuro/sistema**, voz, siempre encima, copias de seguridad
 
