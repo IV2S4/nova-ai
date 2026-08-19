@@ -1248,3 +1248,17 @@ body {
   pointer-events: none; z-index: 1;
 }
 .agent .ghost-text::after { content: attr(data-ghost); color: #4a5470; }
+
+.preview-btn { border-color: rgba(56, 189, 248, 0.35) !important; color: #38bdf8 !important; }
+.preview-btn:hover { background: rgba(56, 189, 248, 0.1) !important; }
+.preview-modal { width: min(960px, 94vw); height: 86vh; display: flex; flex-direction: column; }
+.preview-modal .modal-head { flex-shrink: 0; }
+.preview-file { font-family: 'Consolas', monospace; font-size: 12px; color: var(--muted); margin-left: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.preview-tabs { display: flex; gap: 6px; padding: 10px 14px 0; flex-shrink: 0; }
+.preview-tabs .view-btn { width: auto; padding: 0 10px; gap: 5px; font-size: 12px; }
+.preview-body { flex: 1; min-height: 0; margin: 10px 14px 0; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: #fff; position: relative; }
+.preview-iframe { width: 100%; height: 100%; border: none; display: block; background: #fff; }
+.preview-code { width: 100%; height: 100%; border: none; outline: none; background: #0a0d13; color: #e6e8ef; padding: 12px; font-family: 'Consolas', 'Courier New', monospace; font-size: 12.5px; line-height: 1.55; resize: none; white-space: pre; tab-size: 2; }
+.preview-foot { display: flex; align-items: center; gap: 8px; padding: 12px 14px 14px; flex-shrink: 0; }
+.preview-foot .btn { margin: 0; }
+.preview-foot .ed-ok { margin-right: auto; background: none !important; border: none !important; }

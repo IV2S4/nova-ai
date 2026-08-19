@@ -1,5 +1,10 @@
 module.exports = {
   entries: {
+    '2.2.1': [
+      '🌐 VISTA PREVIA DE PÁGINAS WEB: cuando el agente crea o edita un archivo HTML aparece el botón "Vista previa" junto a la herramienta — se abre un visor con la página renderizada en vivo',
+      '📝 EDITAR Y DESCARGAR: dentro de la vista previa puedes cambiar a la pestaña "Código", editar el HTML y ver el resultado al instante, guardarlo en el proyecto o descargarlo como archivo .html',
+      '🌍 También puedes abrir la página directamente en tu navegador con un clic'
+    ],
     '2.2.0': [
       '🤖 AGENTE AL NIVEL DE CLAUDE CODE / CURSOR: el agente ya puede lanzar SUBAGENTES EN PARALELO (hasta 4) para analizar varios archivos o tareas a la vez, y busca en TODO el código del proyecto con la nueva herramienta search_codebase (como @codebase): localiza funciones, variables o conceptos al instante sin leer archivo por archivo',
       '🖥️ TERMINAL INTEGRADA: pestaña Terminal en el panel del agente para ejecutar comandos en tu proyecto con salida en tiempo real (npm run build, git status, tests…)',

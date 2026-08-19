@@ -899,6 +899,10 @@ ipcMain.handle('shell:open', async (_e, { workspace, rel, target }) => {
       })
       return { ok: true, action: 'vscode', path: p }
     }
+    if (target === 'browser') {
+      await shell.openPath(p)
+      return { ok: true, action: 'browser', path: p }
+    }
     await shell.openPath(p)
     return { ok: true, action: 'explorer', path: p }
   } catch (e) {

@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Bot, FolderOpen, Folder, FileText, Send, Square, Loader2, Terminal, List, Pencil, Globe, CheckCircle2, XCircle, Settings, BadgeCheck, Sparkles, X, Check, Trash2, History, Code2, ExternalLink, RefreshCw, Play, Scissors, Minus, Plus, ChevronLeft, ChevronRight, Eye, EyeOff, Copy, Columns, GitBranch, MessageSquare, ArrowUp, ArrowDown, X as XIcon, Wrench, Search, FileDown, Users } from 'lucide-react'
 import Markdown from './Markdown.jsx'
-import { uid } from '../api.js'
+import { uid, bytesToBase64 } from '../api.js'
 import { PROMPTS, PROMPT_CATEGORIES } from '../prompts.js'
 import i18n from '../i18n.js'
 import { estimateCost } from '../costs.js'
@@ -279,6 +279,12 @@ export default function AgentView({ providers, settings, onOpenSettings }) {
   const [verifyBusy, setVerifyBusy] = useState(false)
   const [verifyResult, setVerifyResult] = useState(null)
   const [suggestion, setSuggestion] = useState('')
+  const [preview, setPreview] = useState(null)
+  const [previewTab, setPreviewTab] = useState('preview')
+  const [previewDraft, setPreviewDraft] = useState('')
+  const [previewShown, setPreviewShown] = useState('')
+  const [previewNotice, setPreviewNotice] = useState('')
+  const previewTimerRef = useRef(null)
   const sessionRef = useRef(null)
   const scrollRef = useRef(null)
   const textareaRef = useRef(null)
@@ -777,6 +783,39 @@ export default function AgentView({ providers, settings, onOpenSettings }) {
     } else {
       setEdNotice(r?.error || 'Error al guardar')
     }
+  }
+
+  const openPreview = async (rel) => {
+    if (!workspace) return
+    const text = await window.api?.readWorkspaceFile(workspace, rel)
+    if (text == null) return
+    setPreview(rel)
+    setPreviewDraft(text)
+    setPreviewShown(text)
+    setPreviewTab('preview')
+  }
+
+  const updatePreviewDraft = (val) => {
+    setPreviewDraft(val)
+    clearTimeout(previewTimerRef.current)
+    previewTimerRef.current = setTimeout(() => setPreviewShown(val), 500)
+  }
+
+  const savePreview = async () => {
+    const r = await window.api?.writeWorkspaceFile(workspace, preview, previewDraft)
+    if (r?.ok) {
+      setPreviewShown(previewDraft)
+      setPreviewNotice(i18n.t('agent.edSaved', { path: preview }))
+      setTimeout(() => setPreviewNotice(''), 2500)
+    } else {
+      setPreviewNotice(r?.error || 'Error al guardar')
+    }
+  }
+
+  const downloadPreview = () => {
+    if (!preview) return
+    const name = preview.split('/').pop() || 'index.html'
+    window.api?.exportFile(name, [{ name: 'HTML', extensions: ['html'] }], bytesToBase64(new TextEncoder().encode(previewDraft)))
   }
 
   const requestSuggestion = (val) => {
@@ -1278,6 +1317,9 @@ export default function AgentView({ providers, settings, onOpenSettings }) {
                       <button className="btn small" onClick={() => fixError(t)} disabled={busy} title="Envía el error al agente para que lo corrija"><Wrench size={12} /> Corregir</button>
                     </>
                   )}
+                  {t.status === 'done' && /\.html?$/i.test((t.args || {}).path || '') && (
+                    <button className="btn small preview-btn" onClick={() => openPreview(t.args.path)} title="Vista previa de la página"><Eye size={12} /> {i18n.t('agent.preview')}</button>
+                  )}
                 </div>
                 {t.output && (
                   <pre className={`tool-output ${t.status === 'running' ? 'live' : ''}`}>{t.output}</pre>
@@ -1496,6 +1538,40 @@ export default function AgentView({ providers, settings, onOpenSettings }) {
                   </div>
                 )
               })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {preview && (
+        <div className="modal-backdrop" onClick={() => { clearTimeout(previewTimerRef.current); setPreview(null) }}>
+          <div className="modal preview-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-head">
+              <h2><Eye size={16} /> {i18n.t('agent.previewTitle')}</h2>
+              <code className="preview-file">{preview}</code>
+              <button className="icon-btn" onClick={() => { clearTimeout(previewTimerRef.current); setPreview(null) }}><X size={18} /></button>
+            </div>
+            <div className="preview-tabs">
+              <button className={`view-btn ${previewTab === 'preview' ? 'active' : ''}`} onClick={() => setPreviewTab('preview')}><Eye size={13} /> {i18n.t('agent.previewTab')}</button>
+              <button className={`view-btn ${previewTab === 'code' ? 'active' : ''}`} onClick={() => setPreviewTab('code')}><Code2 size={13} /> {i18n.t('agent.previewCode')}</button>
+            </div>
+            <div className="preview-body">
+              {previewTab === 'preview' ? (
+                previewShown ? (
+                  <iframe className="preview-iframe" title="preview" srcDoc={previewShown} sandbox="allow-scripts allow-same-origin" />
+                ) : (
+                  <div className="editor-empty">{i18n.t('agent.previewEmpty')}</div>
+                )
+              ) : (
+                <textarea className="preview-code" spellCheck={false} value={previewDraft} onChange={(e) => updatePreviewDraft(e.target.value)} />
+              )}
+            </div>
+            <div className="preview-foot">
+              {previewNotice && <span className="ed-ok">{previewNotice}</span>}
+              <button className="btn small" onClick={savePreview} title="Guarda los cambios en el archivo"><Check size={13} /> {i18n.t('agent.previewSave')}</button>
+              <button className="btn small" onClick={downloadPreview} title="Descarga el archivo HTML"><FileDown size={13} /> {i18n.t('agent.previewDownload')}</button>
+              <button className="btn small" onClick={() => window.api?.openPath(workspace, preview, 'browser')} title="Abre la página en tu navegador"><Globe size={13} /> {i18n.t('agent.previewBrowser')}</button>
+              <button className="btn primary" onClick={() => { clearTimeout(previewTimerRef.current); setPreview(null) }}>{i18n.t('agent.previewClose')}</button>
             </div>
           </div>
         </div>
