@@ -306,7 +306,7 @@ async function* streamAnthropic(cfg, req, msgs, signal) {
     },
     body: JSON.stringify({
       model: req.model,
-      max_tokens: 8192,
+      max_tokens: req.maxTokens || 8192,
       temperature: req.temperature ?? 0.7,
       system: system || undefined,
       messages: content,
@@ -375,8 +375,8 @@ async function* streamGoogle(cfg, req, msgs, signal) {
   const budgetMap = { bajo: 1024, medio: 8192, alto: 16384 }
   const thinkingBudget = req.reasoningEffort ? budgetMap[req.reasoningEffort] : (req.showThinking ? 8192 : undefined)
   const generationConfig = isGemini3
-    ? { maxOutputTokens: 8192, ...(thinkingBudget ? { thinkingConfig: { thinkingBudget, includeThoughts: !!req.showThinking } } : {}) }
-    : { temperature: req.temperature ?? 0.7, maxOutputTokens: 8192 }
+    ? { maxOutputTokens: req.maxTokens || 8192, ...(thinkingBudget ? { thinkingConfig: { thinkingBudget, includeThoughts: !!req.showThinking } } : {}) }
+    : { temperature: req.temperature ?? 0.7, maxOutputTokens: req.maxTokens || 8192 }
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -409,7 +409,7 @@ async function* streamOllama(cfg, req, msgs, signal) {
   const payload = {
     model: req.model,
     stream: true,
-    options: { temperature: req.temperature ?? 0.7 },
+    options: { temperature: req.temperature ?? 0.7, num_predict: req.maxTokens || undefined },
     messages: msgs.map((m) => ({
       role: m.role,
       content: m.content,
@@ -473,7 +473,7 @@ async function* streamOpenAICompat(cfg, def, req, msgs, signal) {
         : m.content
     })),
     stream: true,
-    [maxKey]: 8192,
+    [maxKey]: req.maxTokens || 8192,
     ...(effort ? { reasoning_effort: effort } : {}),
     ...(noTemp ? {} : { temperature: req.temperature ?? 0.7 })
   })

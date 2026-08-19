@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Nova AI</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #0b0e14;
+    overflow: hidden;
+    user-select: none;
+    -webkit-user-select: none;
+    height: 100%;
+  }
+  body {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 18px;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    color: #e6e9f0;
+  }
+  .logo {
+    width: 72px;
+    height: 72px;
+    border-radius: 18px;
+    background: linear-gradient(135deg, #7c6cff, #22d3ee);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 40px;
+    font-weight: 800;
+    color: #fff;
+    box-shadow: 0 8px 32px rgba(124, 108, 255, 0.35);
+    animation: pop 0.5s ease;
+  }
+  @keyframes pop {
+    from { transform: scale(0.6); opacity: 0; }
+    to { transform: scale(1); opacity: 1; }
+  }
+  .brand {
+    font-size: 22px;
+    font-weight: 700;
+    background: linear-gradient(135deg, #7c6cff, #22d3ee);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    letter-spacing: 0.5px;
+  }
+  .spinner {
+    width: 26px;
+    height: 26px;
+    border: 3px solid rgba(124, 108, 255, 0.2);
+    border-top-color: #7c6cff;
+    border-radius: 50%;
+    animation: spin 0.9s linear infinite;
+  }
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+</style>
+</head>
+<body>
+  <div class="logo">N</div>
+  <div class="brand">Nova AI</div>
+  <div class="spinner"></div>
+</body>
+</html>

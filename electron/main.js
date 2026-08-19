@@ -14,8 +14,34 @@ const projects = require('./projects')
 const changelog = require('./changelog')
 const updater = require('./updater')
 const mcp = require('./mcp')
+const { autoUpdater } = require('electron-updater')
 
 const activeRequests = new Map()
+
+let splashWin = null
+
+function createSplash() {
+  splashWin = new BrowserWindow({
+    width: 320,
+    height: 240,
+    frame: false,
+    transparent: false,
+    backgroundColor: '#0b0e14',
+    resizable: false,
+    alwaysOnTop: true,
+    center: true,
+    skipTaskbar: true,
+    title: 'Nova AI',
+    webPreferences: { sandbox: true }
+  })
+  splashWin.loadFile(path.join(__dirname, 'splash.html'))
+  splashWin.on('closed', () => { splashWin = null })
+}
+
+function closeSplash() {
+  if (splashWin && !splashWin.isDestroyed()) splashWin.close()
+  splashWin = null
+}
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -23,6 +49,7 @@ function createWindow() {
     height: 900,
     minWidth: 980,
     minHeight: 640,
+    show: false,
     backgroundColor: '#0b0e14',
     title: 'Nova AI',
     icon: path.join(__dirname, '..', 'build', 'icon.png'),
@@ -33,6 +60,10 @@ function createWindow() {
     }
   })
   win.removeMenu()
+  win.once('ready-to-show', () => {
+    win.show()
+    closeSplash()
+  })
 
   const devUrl = process.env.VITE_DEV_SERVER_URL
   if (devUrl) win.loadURL(devUrl)
@@ -52,7 +83,10 @@ function createWindow() {
 app.whenReady().then(() => {
   app.setAppUserModelId('com.nova.ai')
   memory.init(app)
+  createSplash()
   const win = createWindow()
+
+  setupAutoUpdater(win)
 
   win.webContents.once('did-finish-load', async () => {
     const r = await updater.checkForUpdates(app.getVersion())
@@ -71,6 +105,49 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
+})
+
+// ---------- Auto-actualización (electron-updater, solo app instalada) ----------
+
+let updateReady = false
+
+function setupAutoUpdater(win) {
+  if (!app.isPackaged) return
+  autoUpdater.autoDownload = false
+  autoUpdater.on('update-available', (info) => {
+    if (!win.isDestroyed()) {
+      win.webContents.send('update:info', { latest: String(info.version || '').replace(/^v/, ''), url: '', notes: '', autoAvailable: true })
+    }
+  })
+  autoUpdater.on('update-downloaded', () => {
+    updateReady = true
+    if (!win.isDestroyed()) {
+      win.webContents.send('update:info', { latest: '', url: '', notes: '', ready: true })
+    }
+  })
+  autoUpdater.on('error', (e) => {
+    if (!win.isDestroyed()) {
+      win.webContents.send('update:info', { latest: '', url: '', notes: '', error: String(e?.message || e).slice(0, 300) })
+    }
+  })
+  setTimeout(() => {
+    if (!win.isDestroyed()) autoUpdater.checkForUpdates().catch(() => { })
+  }, 20000)
+}
+
+ipcMain.handle('updates:install', async () => {
+  if (!app.isPackaged) return { ok: false, error: 'Solo disponible en la app instalada' }
+  if (updateReady) {
+    autoUpdater.quitAndInstall()
+    return { ok: true }
+  }
+  try {
+    await autoUpdater.downloadUpdate()
+    updateReady = true
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: String(e?.message || e).slice(0, 300) }
+  }
 })
 
 // ---------- IPC ----------
@@ -168,6 +245,7 @@ ipcMain.handle('providers:test', async (_e, id) => {
 
 ipcMain.handle('chat:send', async (e, req) => {
   const settings = await settingsStore.getSettings(app)
+  const tuning = settings?.tuning?.[req.provider] || {}
   const ctrl = new AbortController()
   activeRequests.set(req.id, ctrl)
   ;(async () => {
@@ -179,7 +257,13 @@ ipcMain.handle('chat:send', async (e, req) => {
       }
       const { messages, summary } = memory.compress(req.messages || [])
       if (summary) sysParts.push(`## Resumen de la parte anterior de esta conversación (ya compactada)\n${summary}`)
-      const enriched = { ...req, system: sysParts.filter(Boolean).join('\n\n'), messages }
+      const enriched = {
+        ...req,
+        temperature: tuning.temperature != null ? tuning.temperature : req.temperature,
+        maxTokens: tuning.maxTokens != null ? tuning.maxTokens : req.maxTokens,
+        system: sysParts.filter(Boolean).join('\n\n'),
+        messages
+      }
       for await (const ev of withRetry(() => streamChat(settings, enriched, ctrl.signal))) {
         if (e.sender.isDestroyed()) { ctrl.abort(); break }
         e.sender.send('chat:event', { id: req.id, ...ev })

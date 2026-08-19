@@ -1,7 +1,7 @@
 {
   "name": "nova-ai",
   "productName": "Nova AI",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Nova AI - Tu asistente de IA todo-en-uno: Claude, GPT, Gemini, Ollama, OpenRouter y mas",
   "main": "electron/main.js",
   "license": "MIT",
@@ -21,6 +21,7 @@
     "dist": "npm run build && electron-builder"
   },
   "dependencies": {
+    "electron-updater": "^6.8.9",
     "highlight.js": "^11.10.0",
     "katex": "^0.18.4",
     "lucide-react": "^1.32.0",
@@ -46,6 +47,12 @@
     "appId": "com.nova.ai",
     "productName": "Nova AI",
     "compression": "maximum",
+    "publish": {
+      "provider": "github",
+      "owner": "IV2S4",
+      "repo": "nova-ai",
+      "releaseType": "release"
+    },
     "files": [
       "electron/**/*",
       "dist/**/*",

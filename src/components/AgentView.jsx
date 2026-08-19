@@ -1,8 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { Bot, FolderOpen, Folder, FileText, Send, Square, Loader2, Terminal, List, Pencil, Globe, CheckCircle2, XCircle, Settings, BadgeCheck, Sparkles, X, Check, Trash2, History, Code2, ExternalLink, RefreshCw, Play, Scissors, Minus, Plus, ChevronLeft, ChevronRight, Eye, EyeOff, Copy, Columns, GitBranch, MessageSquare, ArrowUp, ArrowDown, X as XIcon, Wrench, Search } from 'lucide-react'
+import { Bot, FolderOpen, Folder, FileText, Send, Square, Loader2, Terminal, List, Pencil, Globe, CheckCircle2, XCircle, Settings, BadgeCheck, Sparkles, X, Check, Trash2, History, Code2, ExternalLink, RefreshCw, Play, Scissors, Minus, Plus, ChevronLeft, ChevronRight, Eye, EyeOff, Copy, Columns, GitBranch, MessageSquare, ArrowUp, ArrowDown, X as XIcon, Wrench, Search, FileDown } from 'lucide-react'
 import Markdown from './Markdown.jsx'
 import { uid } from '../api.js'
 import { PROMPTS, PROMPT_CATEGORIES } from '../prompts.js'
+import i18n from '../i18n.js'
 
 function parseDiff(diff) {
   const hunks = []
@@ -215,6 +216,7 @@ export default function AgentView({ providers, settings, onOpenSettings }) {
   const [grepResults, setGrepResults] = useState([])
   const [grepBusy, setGrepBusy] = useState(false)
   const [commitMsgGen, setCommitMsgGen] = useState(false)
+  const [exportNotice, setExportNotice] = useState('')
   const sessionRef = useRef(null)
   const scrollRef = useRef(null)
   const textareaRef = useRef(null)
@@ -588,6 +590,35 @@ export default function AgentView({ providers, settings, onOpenSettings }) {
     setCpId(null)
   }
 
+  const exportSession = async () => {
+    const c = contentRef.current
+    const meta = metaRef.current
+    if (!c.text && !c.tools.length && !c.proposals.length) {
+      setExportNotice(i18n.t('agent.noSession'))
+      setTimeout(() => setExportNotice(''), 3000)
+      return
+    }
+    const lines = []
+    lines.push(`# ${meta?.prompt?.slice(0, 60) || i18n.t('agent.title')}`, '')
+    if (meta?.prompt) lines.push(`**${i18n.t('agent.exportTask')}:** ${meta.prompt}`, '')
+    if (c.text) lines.push(`## ${i18n.t('agent.exportAssistant')}`, '', c.text, '')
+    if (c.tools.length) {
+      lines.push(`## ${i18n.t('agent.exportTools')}`, '')
+      c.tools.forEach((t) => {
+        const status = t.status === 'done' ? i18n.t('agent.exportDone') : t.status === 'error' ? i18n.t('agent.exportError') : i18n.t('agent.exportRunning')
+        const sum = toolSummary(t)
+        lines.push(`- **${TOOL_NAMES[t.name] || t.name}** — ${status}${sum ? ` — \`${sum}\`` : ''}`)
+      })
+      lines.push('')
+    }
+    if (c.proposals.length) {
+      lines.push(`## ${i18n.t('agent.exportProposals')}`, '')
+      c.proposals.forEach((p) => lines.push(`- ${p.path} — ${p.applied ? i18n.t('agent.exportApplied') : i18n.t('agent.exportPending')}`))
+      lines.push('')
+    }
+    await window.api?.exportText?.('Nova AI - Sesion agente.md', lines.join('\n'))
+  }
+
   const applyOne = async (p) => {
     if (!workspace) return
     const cp = await window.api?.createCheckpoint({ workspace, files: [p.path] })
@@ -642,9 +673,9 @@ export default function AgentView({ providers, settings, onOpenSettings }) {
     <div className="agent">
       <div className="agent-side">
         <div className="agent-side-tabs">
-          <button className={`agent-tab ${sideTab === 'sessions' ? 'active' : ''}`} onClick={() => setSideTab('sessions')}><History size={13} /> Sesiones</button>
-          <button className={`agent-tab ${sideTab === 'files' ? 'active' : ''}`} onClick={() => setSideTab('files')}><Folder size={13} /> Archivos</button>
-          <button className={`agent-tab ${sideTab === 'git' ? 'active' : ''}`} onClick={() => setSideTab('git')}><GitBranch size={13} /> Git</button>
+          <button className={`agent-tab ${sideTab === 'sessions' ? 'active' : ''}`} onClick={() => setSideTab('sessions')}><History size={13} /> {i18n.t('agent.tabsSessions')}</button>
+          <button className={`agent-tab ${sideTab === 'files' ? 'active' : ''}`} onClick={() => setSideTab('files')}><Folder size={13} /> {i18n.t('agent.tabsFiles')}</button>
+          <button className={`agent-tab ${sideTab === 'git' ? 'active' : ''}`} onClick={() => setSideTab('git')}><GitBranch size={13} /> {i18n.t('agent.tabsGit')}</button>
         </div>
         <div className="agent-side-body">
           {sideTab === 'sessions' && (
@@ -855,16 +886,16 @@ export default function AgentView({ providers, settings, onOpenSettings }) {
         <div className="chat-head">
           <div className="chat-title">
             <Bot size={17} />
-            <span>Agente IA</span>
-            {loaded && <span className="badge">sesión {fmtDate(loaded.updatedAt)}</span>}
+            <span>{i18n.t('agent.title')}</span>
+            {loaded && <span className="badge">{i18n.t('agent.sessionBadge')} {fmtDate(loaded.updatedAt)}</span>}
             {busy && <Loader2 size={14} className="spin" />}
           </div>
           <div className="chat-head-right">
-            <button className="btn" onClick={() => setPromptsOpen(true)} title="Prompts avanzados listos para usar"><Sparkles size={14} /> Prompts</button>
-            <button className="btn" onClick={() => setSkillsOpen(true)} title="Skills del agente"><BadgeCheck size={14} /> Skills</button>
+            <button className="btn" onClick={() => setPromptsOpen(true)} title="Prompts avanzados listos para usar"><Sparkles size={14} /> {i18n.t('agent.prompts')}</button>
+            <button className="btn" onClick={() => setSkillsOpen(true)} title="Skills del agente"><BadgeCheck size={14} /> {i18n.t('agent.skills')}</button>
             <button className={`btn ${workspace ? '' : 'primary'}`} onClick={pickWorkspace} title="Elige la carpeta del proyecto donde trabajará el agente">
               <FolderOpen size={14} />
-              {workspace ? workspace.split(/[\\/]/).pop() : 'Elegir proyecto'}
+              {workspace ? workspace.split(/[\\/]/).pop() : i18n.t('agent.chooseProject')}
             </button>
             <select className="agent-select" value={providerId} onChange={(e) => changeProvider(e.target.value)} title="Proveedor del agente">
               {providers.map((p) => (
@@ -875,9 +906,10 @@ export default function AgentView({ providers, settings, onOpenSettings }) {
               {(current?.models || []).filter((m) => !current?.imageModels?.includes(m)).map((m) => <option key={m} value={m}>{m}{current?.local || current?.id === 'groq' || (current?.id === 'mistral' && /^(mistral-small|ministral)/.test(m)) || /^gemini-[0-9].*flash/i.test(m) || /:free$/i.test(m) ? ' (gratis)' : ''}</option>)}
             </select>
             {busy && (
-              <button className="btn danger" onClick={stop}><Square size={13} /> Detener</button>
+              <button className="btn danger" onClick={stop}><Square size={13} /> {i18n.t('agent.stop')}</button>
             )}
-            <button className="icon-btn" onClick={onOpenSettings} title="Ajustes"><Settings size={16} /></button>
+            <button className="icon-btn" onClick={exportSession} title={i18n.t('agent.exportSession')}><FileDown size={16} /></button>
+            <button className="icon-btn" onClick={onOpenSettings} title={i18n.t('agent.settings')}><Settings size={16} /></button>
           </div>
         </div>
 
@@ -1044,7 +1076,7 @@ export default function AgentView({ providers, settings, onOpenSettings }) {
           <div className="input-bar">
             <label className={`plan-toggle ${planMode ? 'on' : ''}`} title="Modo plan: el agente solo propone cambios (diffs) y no toca tus archivos hasta que los apruebes">
               <input type="checkbox" checked={planMode} onChange={(e) => setPlanMode(e.target.checked)} />
-              <Scissors size={13} /> Plan
+              <Scissors size={13} /> {i18n.t('agent.plan')}
             </label>
             <textarea
               ref={textareaRef}
@@ -1062,9 +1094,9 @@ export default function AgentView({ providers, settings, onOpenSettings }) {
               disabled={busy}
             />
             {busy ? (
-              <button className="btn danger" onClick={stop} title="Detener"><Square size={16} /></button>
+              <button className="btn danger" onClick={stop} title={i18n.t('agent.stop')}><Square size={16} /></button>
             ) : (
-              <button className="btn primary" onClick={() => send()} disabled={!input.trim()} title="Enviar"><Send size={16} /></button>
+              <button className="btn primary" onClick={() => send()} disabled={!input.trim()} title={i18n.t('agent.send')}><Send size={16} /></button>
             )}
           </div>
           <div className="input-foot">
@@ -1142,6 +1174,8 @@ export default function AgentView({ providers, settings, onOpenSettings }) {
           </div>
         </div>
       )}
+
+      {exportNotice && <div className="toast">{exportNotice}</div>}
 
       {ctxMenu && (
         <div

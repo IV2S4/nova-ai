@@ -6,6 +6,9 @@ import AgentView from './components/AgentView.jsx'
 import SettingsModal from './components/SettingsModal.jsx'
 import ChangelogModal from './components/ChangelogModal.jsx'
 import { uid } from './api.js'
+import i18n from './i18n.js'
+
+const t = i18n.t.bind(i18n)
 
 export default function App() {
   const [providers, setProviders] = useState([])
@@ -43,6 +46,7 @@ export default function App() {
       setAppInfo(info)
       const s = await window.api.getSettings()
       setSettings(s)
+      i18n.setLang(s?.language || 'es')
       if (s.lastSeenVersion !== info.version) setShowChangelog(true)
       const p = await window.api.getProviders()
       setProviders(p)
@@ -80,7 +84,9 @@ export default function App() {
       }
     })
     const unsubUpd = window.api?.onUpdateInfo?.((info) => {
-      if (info?.latest) notify(`Nueva versión v${info.latest} disponible. Ajustes → Buscar actualizaciones`)
+      if (info?.latest) notify(t('new-version-toast', { v: info.latest }))
+      if (info?.ready) notify(t('update-ready-toast'))
+      if (info?.error) notify(t('update-error-toast', { e: info.error }))
     })
     return () => { unsub?.(); unsubUpd?.() }
   }, [])
@@ -97,11 +103,15 @@ export default function App() {
   }, [settings?.theme])
 
   const newChatRef = useRef(() => {})
+  const viewRef = useRef(() => {})
 
   useEffect(() => {
     const onKey = (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 'n') { e.preventDefault(); newChatRef.current() }
       if ((e.ctrlKey || e.metaKey) && e.key === ',') { e.preventDefault(); setSettingsOpen(true) }
+      if ((e.ctrlKey || e.metaKey) && e.key === '1') { e.preventDefault(); viewRef.current('chat') }
+      if ((e.ctrlKey || e.metaKey) && e.key === '2') { e.preventDefault(); viewRef.current('compare') }
+      if ((e.ctrlKey || e.metaKey) && e.key === '3') { e.preventDefault(); viewRef.current('agent') }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault()
         if (!settingsOpen && !showChangelog) setPaletteOpen((o) => !o)
@@ -116,7 +126,7 @@ export default function App() {
     const def = p.find((x) => x.hasKey)
     return {
       id: uid(),
-      title: 'Nueva conversación',
+      title: t('new-conversation'),
       provider: def?.id || 'openai',
       model: def?.models?.[0] || (def?.id === 'ollama' ? 'llama3.3' : ''),
       system: '',
@@ -139,14 +149,15 @@ export default function App() {
 
   const changeView = (v) => {
     if (busy() && v !== view) {
-      notify('Detén la respuesta en curso para cambiar de vista')
+      notify(t('stop-busy-change-view'))
       return
     }
     setView(v)
   }
+  viewRef.current = changeView
 
   const newChat = () => {
-    if (busy()) { notify('Detén la respuesta en curso para abrir un chat nuevo'); return }
+    if (busy()) { notify(t('stop-busy-new-chat')); return }
     createLocal(convos, providers)
   }
   newChatRef.current = newChat
@@ -176,7 +187,7 @@ export default function App() {
 
   const selectConvo = async (id) => {
     if (id === activeId) return
-    if (busy()) { notify('Detén la respuesta en curso para cambiar de conversación'); return }
+    if (busy()) { notify(t('stop-busy-switch-convo')); return }
     if (convRef.current) window.api?.saveHistory(convRef.current)
     const c = await window.api.getHistory(id)
     if (c) {
@@ -186,7 +197,7 @@ export default function App() {
   }
 
   const deleteConvo = async (id) => {
-    if (busy()) { notify('Detén la respuesta en curso para eliminar conversaciones'); return }
+    if (busy()) { notify(t('stop-busy-delete')); return }
     await window.api.deleteHistory(id)
     setConvos((h) => h.filter((c) => c.id !== id))
     if (id === activeId) {
@@ -202,7 +213,7 @@ export default function App() {
   }
 
   const clearHistory = async () => {
-    if (busy()) { notify('Detén la respuesta en curso para borrar el historial'); return }
+    if (busy()) { notify(t('stop-busy-clear-history')); return }
     for (const c of convos) await window.api.deleteHistory(c.id)
     setConvos([])
     createLocal([], providers)
@@ -293,8 +304,8 @@ export default function App() {
   if (!window.api) {
     return (
       <div className="fatal">
-        <h2>Esta app debe ejecutarse con Electron</h2>
-        <p>Ejecuta <code>npm start</code> dentro de la carpeta de la app.</p>
+        <h2>{t('needs-electron')}</h2>
+        <p>{t('run-npm-start')}</p>
       </div>
     )
   }
@@ -303,7 +314,7 @@ export default function App() {
     return (
       <div className="fatal">
         <div className="spinner-big" />
-        <p>Cargando Nova AI…</p>
+        <p>{t('loading-app')}</p>
       </div>
     )
   }
@@ -414,13 +425,13 @@ function Palette({ convos, activeId, query, setQuery, idx, setIdx, onClose, onNe
   }, [idx])
 
   const commands = [
-    { id: 'new', label: 'Nueva conversación', hint: 'Ctrl+N', run: onNewChat },
-    { id: 'chat', label: 'Ir al chat', hint: '', run: () => onView('chat') },
-    { id: 'compare', label: 'Comparador de modelos', hint: '', run: () => onView('compare') },
-    { id: 'agent', label: 'Agente de código', hint: '', run: () => onView('agent') },
-    { id: 'export', label: 'Exportar conversación', hint: 'MD', run: onExport },
-    { id: 'settings', label: 'Ajustes', hint: 'Ctrl+,', run: onOpenSettings },
-    { id: 'changelog', label: 'Ver novedades', hint: '', run: onChangelog }
+    { id: 'new', label: t('new-conversation'), hint: 'Ctrl+N', run: onNewChat },
+    { id: 'chat', label: t('go-to-chat'), hint: 'Ctrl+1', run: () => onView('chat') },
+    { id: 'compare', label: t('model-comparator'), hint: 'Ctrl+2', run: () => onView('compare') },
+    { id: 'agent', label: t('code-agent'), hint: 'Ctrl+3', run: () => onView('agent') },
+    { id: 'export', label: t('export-conversation'), hint: 'MD', run: onExport },
+    { id: 'settings', label: t('settings'), hint: 'Ctrl+,', run: onOpenSettings },
+    { id: 'changelog', label: t('see-changelog'), hint: '', run: onChangelog }
   ]
   const q = query.trim().toLowerCase()
   const found = commands.filter((c) => c.label.toLowerCase().includes(q) || (c.hint || '').toLowerCase().includes(q))
@@ -429,7 +440,7 @@ function Palette({ convos, activeId, query, setQuery, idx, setIdx, onClose, onNe
     .slice(0, 6)
   const items = [
     ...found.map((c) => ({ kind: 'cmd', ...c })),
-    ...foundConvos.map((c) => ({ kind: 'conv', id: c.id, label: c.title, hint: `${c.count} msgs`, run: () => onSelectConvo(c.id) }))
+    ...foundConvos.map((c) => ({ kind: 'conv', id: c.id, label: c.title, hint: t('msgs', { n: c.count }), run: () => onSelectConvo(c.id) }))
   ]
 
   const onKey = (e) => {
@@ -449,12 +460,12 @@ function Palette({ convos, activeId, query, setQuery, idx, setIdx, onClose, onNe
             value={query}
             onChange={(e) => { setQuery(e.target.value); setIdx(0) }}
             onKeyDown={onKey}
-            placeholder="Comandos o buscar conversaciones…"
+            placeholder={t('palette-placeholder')}
           />
           <span className="kbd">ESC</span>
         </div>
         <div className="palette-list" ref={listRef}>
-          {items.length === 0 && <div className="palette-empty">Sin resultados</div>}
+          {items.length === 0 && <div className="palette-empty">{t('no-results')}</div>}
           {items.map((it, i) => (
             <div key={`${it.kind}-${it.id}`} className={`palette-item ${i === idx ? 'active' : ''}`} onMouseEnter={() => setIdx(i)} onMouseDown={() => it.run()}>
               <span className="palette-label">{it.label}</span>

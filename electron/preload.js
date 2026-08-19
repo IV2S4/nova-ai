@@ -81,6 +81,7 @@ contextBridge.exposeInMainWorld('api', {
   importBackup: () => ipcRenderer.invoke('backup:import'),
   setAlwaysOnTop: () => ipcRenderer.invoke('win:alwaysOnTop'),
   checkUpdates: () => ipcRenderer.invoke('updates:check'),
+  installUpdate: () => ipcRenderer.invoke('updates:install'),
   ignoreUpdate: (v) => ipcRenderer.invoke('updates:ignore', v),
   onUpdateInfo: (cb) => {
     const listener = (_e, info) => cb(info)

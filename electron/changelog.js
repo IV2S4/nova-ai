@@ -1,5 +1,16 @@
 module.exports = {
   entries: {
+    '2.1.0': [
+      '🌍 IDIOMA: Nova AI ahora habla español e inglés. Cambia el idioma en Ajustes → General → Idioma de la interfaz (toda la interfaz se traduce al instante)',
+      '⬇️ ACTUALIZACIONES AUTOMÁTICAS: "Buscar actualizaciones" ahora descarga e instala la nueva versión desde la propia app (solo en la versión instalada). También avisa al arrancar si hay una versión nueva y cuando la descarga termina',
+      '🎬 Pantalla de inicio con el logo de Nova mientras carga la app',
+      '📄 NUEVAS HERRAMIENTAS DEL AGENTE: lee PDFs del proyecto (documentación, manuales, informes) y ejecuta los tests automáticamente (npm test, pytest, go test, cargo test…)',
+      '⚙️ AJUSTES POR PROVEEDOR: temperatura y máx. tokens por respuesta para cada IA desde Ajustes (afecta al chat y al agente)',
+      '📌 PLANTILLAS PERSONALIZADAS: crea tus propias plantillas de mensajes en Ajustes y aparecen en la pantalla de inicio con un clic',
+      '💾 Exporta la sesión del agente a Markdown con un botón (incluye herramientas ejecutadas y propuestas)',
+      '⌨️ Atajos nuevos: Ctrl+1 (chat), Ctrl+2 (comparador), Ctrl+3 (agente)',
+      'Corrección: las herramientas de servidores MCP ya aparecen en la primera ejecución del agente (antes solo en las siguientes)'
+    ],
     '2.0.0': [
       '🤖 SERVERS MCP (Model Context Protocol): conecta herramientas externas al agente (editores, navegadores, bases de datos…) desde Ajustes → MCP, con botón para probar cada servidor',
       '🗂️ PROYECTOS DE CONOCIMIENTO: crea proyectos con archivos (PDF, docs, código…), Nova los indexa en fragmentos y el agente los consulta con búsqueda por relevancia — respuestas basadas en TU documentación',

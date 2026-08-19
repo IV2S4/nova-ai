@@ -1,15 +1,18 @@
 import React, { useState } from 'react'
 import { Plus, Settings, GitCompareArrows, Bot, Trash2, Search, Sparkles, Pin, PictureInPicture2, Folder, FolderPlus, X } from 'lucide-react'
+import i18n from '../i18n.js'
+
+const t = i18n.t.bind(i18n)
 
 const DAY = 86400000
 
 function groupOf(ts) {
   const now = new Date()
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
-  if (ts >= today) return 'Hoy'
-  if (ts >= today - DAY) return 'Ayer'
-  if (ts >= today - 6 * DAY) return 'Últimos 7 días'
-  return 'Más antiguas'
+  if (ts >= today) return 'today'
+  if (ts >= today - DAY) return 'yesterday'
+  if (ts >= today - 6 * DAY) return 'last-7-days'
+  return 'older'
 }
 
 export default function Sidebar({ convos, activeId, view, onNew, onSelect, onDelete, onRename, onTogglePin, onSetFolder, onRemoveFolder, onViewChange, onOpenSettings, providers, configuredCount }) {
@@ -26,7 +29,7 @@ export default function Sidebar({ convos, activeId, view, onNew, onSelect, onDel
   const folders = [...new Set(sorted.map((c) => c.folder).filter(Boolean))]
   const rest = sorted.filter((c) => !c.pinned && !c.folder)
   const groups = []
-  for (const g of ['Hoy', 'Ayer', 'Últimos 7 días', 'Más antiguas']) {
+  for (const g of ['today', 'yesterday', 'last-7-days', 'older']) {
     const items = rest.filter((c) => groupOf(c.updatedAt || c.createdAt || 0) === g)
     if (items.length) groups.push({ name: g, items })
   }
@@ -52,32 +55,32 @@ const rowProps = {
           <Sparkles size={20} />
           <div>
             <h1>Nova AI</h1>
-            <span>Tu IA todo-en-uno</span>
+            <span>{t('sidebar-tagline')}</span>
           </div>
         </div>
-        <button className="btn primary" onClick={onNew}><Plus size={16} /> Nuevo chat</button>
+        <button className="btn primary" onClick={onNew}><Plus size={16} /> {t('new-chat')}</button>
         <button className={`btn ${view === 'compare' ? 'active' : ''}`} onClick={() => onViewChange(view === 'compare' ? 'chat' : 'compare')}>
-          <GitCompareArrows size={16} /> Comparar modelos
+          <GitCompareArrows size={16} /> {t('compare-models')}
         </button>
         <button className={`btn ${view === 'agent' ? 'active' : ''}`} onClick={() => onViewChange(view === 'agent' ? 'chat' : 'agent')}>
-          <Bot size={16} /> Agente IA
+          <Bot size={16} /> {t('agent-ai')}
         </button>
       </div>
 
       <div className="search-box">
         <Search size={14} />
-        <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Buscar conversaciones…" />
+        <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder={t('search-conversations')} />
       </div>
 
       <div className="convo-list">
-        {sorted.length === 0 && <div className="empty-hint">{filter ? 'Sin resultados' : 'Sin conversaciones todavía'}</div>}
+        {sorted.length === 0 && <div className="empty-hint">{filter ? t('no-results') : t('no-conversations-yet')}</div>}
         {filter ? (
           sorted.map((c) => <ConvoRow key={c.id} c={c} {...rowProps} />)
         ) : (
           <>
             {pinned.length > 0 && (
               <div className="convo-group">
-                <div className="convo-group-head"><Pin size={11} /> Fijadas</div>
+                <div className="convo-group-head"><Pin size={11} /> {t('pinned')}</div>
                 {pinned.map((c) => <ConvoRow key={c.id} c={c} {...rowProps} />)}
               </div>
             )}
@@ -85,7 +88,7 @@ const rowProps = {
               <div key={f} className="convo-group">
                 <div className="convo-group-head folder-head">
                   <Folder size={11} /> {f}
-                  <button className="icon-btn danger" title="Quitar esta carpeta (las conversaciones vuelven a su sitio)" onClick={(e) => { e.stopPropagation(); if (confirm(`¿Quitar la carpeta "${f}"? Las conversaciones se moverán fuera.`)) onRemoveFolder(f) }}>
+                  <button className="icon-btn danger" title={t('remove-folder-tip')} onClick={(e) => { e.stopPropagation(); if (confirm(t('remove-folder-confirm', { name: f }))) onRemoveFolder(f) }}>
                     <X size={11} />
                   </button>
                 </div>
@@ -94,7 +97,7 @@ const rowProps = {
             ))}
             {groups.map((g) => (
               <div key={g.name} className="convo-group">
-                <div className="convo-group-head">{g.name}</div>
+                <div className="convo-group-head">{t(g.name)}</div>
                 {g.items.map((c) => <ConvoRow key={c.id} c={c} {...rowProps} />)}
               </div>
             ))}
@@ -105,16 +108,16 @@ const rowProps = {
       <div className="sidebar-foot">
         <div className="status-line">
           <span className={`dot ${configuredCount > 0 ? 'on' : ''}`} />
-          {configuredCount > 0 ? `${configuredCount} proveedores listos` : 'Configura tus IA'}
+          {configuredCount > 0 ? t('providers-ready', { n: configuredCount }) : t('configure-ai')}
         </div>
         <button
           className={`btn ${alwaysOnTop ? 'active' : ''}`}
           onClick={async () => setAlwaysOnTop(await window.api.setAlwaysOnTop())}
-          title="Mantener la ventana siempre encima de las demás"
+          title={t('always-on-top-tip')}
         >
-          <PictureInPicture2 size={15} /> {alwaysOnTop ? 'Siempre encima: sí' : 'Siempre encima'}
+          <PictureInPicture2 size={15} /> {alwaysOnTop ? t('always-on-top-yes') : t('always-on-top')}
         </button>
-        <button className="btn" onClick={onOpenSettings}><Settings size={15} /> Ajustes</button>
+        <button className="btn" onClick={onOpenSettings}><Settings size={15} /> {t('settings')}</button>
       </div>
     </aside>
   )
@@ -145,36 +148,36 @@ function ConvoRow({ c, activeId, editingId, editTitle, setEditingId, setEditTitl
         ) : (
           <div
             className="convo-title"
-            title="Doble clic para renombrar"
+            title={t('double-click-rename')}
             onDoubleClick={(e) => { e.stopPropagation(); setEditingId(c.id); setEditTitle(c.title || '') }}
           >
-            {c.title || 'Sin título'}
+            {c.title || t('untitled')}
           </div>
         )}
-        <div className="convo-sub">{providerName(c.provider)} · {c.count} msgs{c.folder ? ` · ${c.folder}` : ''}</div>
+        <div className="convo-sub">{providerName(c.provider)} · {t('msgs', { n: c.count })}{c.folder ? ` · ${c.folder}` : ''}</div>
       </div>
       <div className="convo-actions">
         {folderOpen === c.id && (
           <div className="folder-menu" onClick={(e) => e.stopPropagation()}>
-            <div className="folder-menu-title">Mover a carpeta</div>
+            <div className="folder-menu-title">{t('move-to-folder')}</div>
             {folders.map((f) => (
               <button key={f} className={`folder-opt ${c.folder === f ? 'sel' : ''}`} onClick={() => pickFolder(f)}><Folder size={12} /> {f}</button>
             ))}
             <button className="folder-opt" onClick={() => {
               setFolderOpen(null)
-              const name = prompt('Nombre de la carpeta:')
+              const name = prompt(t('folder-name-prompt'))
               if (name && name.trim()) pickFolder(name.trim())
-            }}><FolderPlus size={12} /> Nueva carpeta…</button>
-            {c.folder && <button className="folder-opt danger" onClick={() => pickFolder('')}><X size={12} /> Quitar de la carpeta</button>}
+            }}><FolderPlus size={12} /> {t('new-folder')}</button>
+            {c.folder && <button className="folder-opt danger" onClick={() => pickFolder('')}><X size={12} /> {t('remove-from-folder')}</button>}
           </div>
         )}
-        <button className={`icon-btn convo-folder ${c.folder ? 'has' : ''}`} onClick={(e) => { e.stopPropagation(); setFolderOpen(folderOpen === c.id ? null : c.id) }} title={c.folder ? `Carpeta: ${c.folder}` : 'Mover a carpeta'}>
+        <button className={`icon-btn convo-folder ${c.folder ? 'has' : ''}`} onClick={(e) => { e.stopPropagation(); setFolderOpen(folderOpen === c.id ? null : c.id) }} title={c.folder ? t('folder-label', { name: c.folder }) : t('move-to-folder')}>
           <Folder size={13} />
         </button>
-        <button className={`icon-btn convo-pin ${c.pinned ? 'pinned' : ''}`} onClick={(e) => { e.stopPropagation(); onTogglePin(c.id) }} title={c.pinned ? 'Desfijar conversación' : 'Fijar conversación'}>
+        <button className={`icon-btn convo-pin ${c.pinned ? 'pinned' : ''}`} onClick={(e) => { e.stopPropagation(); onTogglePin(c.id) }} title={c.pinned ? t('unpin-convo') : t('pin-convo')}>
           <Pin size={14} />
         </button>
-        <button className="icon-btn danger convo-del" onClick={(e) => { e.stopPropagation(); onDelete(c.id) }} title="Eliminar">
+        <button className="icon-btn danger convo-del" onClick={(e) => { e.stopPropagation(); onDelete(c.id) }} title={t('delete')}>
           <Trash2 size={14} />
         </button>
       </div>

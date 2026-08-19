@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { X, KeyRound, Eye, EyeOff, Save, Trash2, CheckCircle2, XCircle, Loader2, ExternalLink, Volume2, Sparkles, Download, Upload, Brain, Plus, Play, RefreshCw, Plug, Server } from 'lucide-react'
+import i18n from '../i18n.js'
 
 export default function SettingsModal({ open, onClose, providers, settings, onSaved, testProvider, onClearHistory, currentVersion, onShowChangelog }) {
   const [draft, setDraft] = useState(null)
@@ -111,11 +112,24 @@ const saveRules = async () => {
     })
   }
 
-  const save = async () => {
+const save = async () => {
     const savedSettings = await window.api.saveSettings(draft)
     onSaved(savedSettings)
     setSaved(true)
     setTimeout(() => setSaved(false), 2000)
+  }
+
+  const saveTemplates = async (next) => {
+    set('templates', next)
+    const s = await window.api.saveSettings({ templates: next })
+    onSaved(s)
+  }
+
+  const saveTuning = async (id, patch) => {
+    const next = { ...(draft.tuning || {}), [id]: { ...(draft.tuning?.[id] || {}), ...patch } }
+    set('tuning', next)
+    const s = await window.api.saveSettings({ tuning: next })
+    onSaved(s)
   }
 
   const runTest = async (id) => {
@@ -128,12 +142,16 @@ const saveRules = async () => {
     }
   }
 
-  const checkUpdates = async () => {
+const checkUpdates = async () => {
     setUpdState({ loading: true })
     const r = await window.api.checkUpdates()
     setUpdState(r)
     if (r?.ok && r.updateAvailable) {
-      if (confirm(`Nueva versión v${r.latest} disponible.\n\n${r.notes || 'Descarga la última versión desde GitHub.'}\n\n¿Abrir la página de descarga?`)) {
+      if (confirm(`Nueva versión v${r.latest} disponible.\n\n${r.notes || 'Descarga la última versión desde GitHub.'}\n\n¿Descargar e instalar automáticamente? (Pulsa Cancelar para abrir la página de descarga)`)) {
+        const res = await window.api.installUpdate()
+        if (res?.ok) setUpdState({ loading: false, ok: true, updateAvailable: false, message: 'Actualización descargada. Se instalará al reiniciar la app.' })
+        else setUpdState({ loading: false, ok: false, updateAvailable: true, latest: r.latest, error: res?.error || 'No se pudo descargar (solo disponible en la app instalada).' })
+      } else {
         window.open(r.url, '_blank')
         window.api.ignoreUpdate(r.latest)
       }
@@ -227,11 +245,34 @@ const saveRules = async () => {
                     </div>
                   </div>
                 )}
-                {(p.id === 'ollama' || p.id === 'lmstudio') && (
+{(p.id === 'ollama' || p.id === 'lmstudio') && (
                   <button className="btn" disabled={tests[p.id]?.loading} onClick={() => startLocal(p.id)} title={`Arranca el servidor local de ${p.name} automáticamente`}>
                     <Play size={13} /> Iniciar servidor
                   </button>
                 )}
+              </div>
+              <div className="key-row" style={{ flexWrap: 'wrap', alignItems: 'center' }}>
+                <div className="row-slider" style={{ flex: 1, minWidth: 200 }}>
+                  <span>Temperatura</span>
+                  <input
+                    type="range" min="0" max="2" step="0.1"
+                    value={draft.tuning?.[p.id]?.temperature ?? 0.7}
+                    onChange={(e) => saveTuning(p.id, { temperature: parseFloat(e.target.value) })}
+                  />
+                  <span>{draft.tuning?.[p.id]?.temperature != null ? draft.tuning[p.id].temperature : 'Automático'}</span>
+                </div>
+                <div className="key-input" style={{ maxWidth: 240 }}>
+                  <Sparkles size={14} />
+                  <input
+                    type="number" min="256" step="256"
+                    value={draft.tuning?.[p.id]?.maxTokens ?? ''}
+                    placeholder="Máx. tokens por respuesta (automático)"
+                    onChange={(e) => saveTuning(p.id, { maxTokens: e.target.value ? parseInt(e.target.value, 10) : null })}
+                  />
+                </div>
+                <button className="icon-btn" title="Restablecer temperatura y tokens (automático)" onClick={() => saveTuning(p.id, { temperature: null, maxTokens: null })}>
+                  <RefreshCw size={13} />
+                </button>
               </div>
               {p.id === 'openaicompat' ? (
                 <p className="hint">Funciona con <b>Jan</b> (puerto 1337), <b>GPT4All</b> (4891), <b>llama.cpp</b>, <b>llamafile</b>, <b>LocalAI</b>, <b>vLLM</b> y cualquier servidor OpenAI-compatible. Escribe su URL, guarda y pulsa Probar.</p>
@@ -500,36 +541,28 @@ const saveRules = async () => {
             </div>
           </div>
 
-          <h3>Plantillas</h3>
+<h3>Plantillas de mensajes</h3>
           <div className="provider-card">
             <p className="hint">Plantillas reutilizables que puedes insertar en el chat con un clic (botón 🏷️ del compositor).</p>
             {(draft.templates || []).map((t, i) => (
               <div key={t.id} className="template-row">
                 <input
                   className="tpl-name"
-                  value={t.name}
-                  placeholder="Nombre de la plantilla"
-                  onChange={(e) => {
-                    const arr = [...draft.templates]
-                    arr[i] = { ...arr[i], name: e.target.value }
-                    set('templates', arr)
-                  }}
+                  value={t.title || ''}
+                  placeholder="Título de la plantilla"
+                  onChange={(e) => saveTemplates((draft.templates || []).map((x, j) => (j === i ? { ...x, title: e.target.value } : x)))}
                 />
                 <textarea
                   className="tpl-text"
                   rows={2}
-                  value={t.text}
+                  value={t.text || ''}
                   placeholder="Texto de la plantilla…"
-                  onChange={(e) => {
-                    const arr = [...draft.templates]
-                    arr[i] = { ...arr[i], text: e.target.value }
-                    set('templates', arr)
-                  }}
+                  onChange={(e) => saveTemplates((draft.templates || []).map((x, j) => (j === i ? { ...x, text: e.target.value } : x)))}
                 />
                 <button
                   className="icon-btn"
                   title="Eliminar plantilla"
-                  onClick={() => set('templates', draft.templates.filter((x) => x.id !== t.id))}
+                  onClick={() => saveTemplates((draft.templates || []).filter((x) => x.id !== t.id))}
                 >
                   <Trash2 size={13} />
                 </button>
@@ -537,13 +570,13 @@ const saveRules = async () => {
             ))}
             <button
               className="btn"
-              onClick={() => set('templates', [...(draft.templates || []), { id: `t${Date.now()}`, name: '', text: '' }])}
+              onClick={() => saveTemplates([...(draft.templates || []), { id: `t${Date.now()}`, title: '', text: '' }])}
             >
               <Plus size={14} /> Añadir plantilla
             </button>
           </div>
 
-          <h3>General</h3>
+<h3>General</h3>
           <div className="provider-card">
             <label className="row-check">
               <input
@@ -553,6 +586,22 @@ const saveRules = async () => {
               />
               Tema claro (en lugar de oscuro)
             </label>
+          </div>
+          <div className="provider-card">
+            <div className="row-slider">
+              <span>Idioma de la interfaz</span>
+              <select
+                className="thinking-select"
+                value={draft.language || 'es'}
+                onChange={(e) => {
+                  set('language', e.target.value)
+                  i18n.setLang(e.target.value)
+                }}
+              >
+                <option value="es">Español</option>
+                <option value="en">English</option>
+              </select>
+            </div>
           </div>
           <div className="provider-card">
             <label className="row-check">

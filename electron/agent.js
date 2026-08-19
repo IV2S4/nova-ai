@@ -6,6 +6,7 @@ const websearch = require('./websearch')
 const { findRelevantSkills } = require('./skills')
 const memory = require('./memory')
 const mcp = require('./mcp')
+const files = require('./files')
 
 const MAX_ITERS = 25
 const MAX_OUTPUT = 30000
@@ -23,6 +24,33 @@ const TOOLS = [
           cwd: { type: 'string', description: 'Subcarpeta del proyecto donde ejecutarlo (opcional)' }
         },
         required: ['command']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'run_tests',
+      description: 'Detecta y ejecuta la suite de tests del proyecto automáticamente (npm test, pytest, cargo test, go test, etc.). Úsala para verificar que el código funciona.',
+      parameters: {
+        type: 'object',
+        properties: {
+          cwd: { type: 'string', description: 'Subcarpeta del proyecto donde están los tests (opcional)' }
+        }
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'read_pdf',
+      description: 'Lee y extrae el texto de un archivo PDF del proyecto. Útil para documentación, manuales o informes.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'Ruta relativa al proyecto del PDF' }
+        },
+        required: ['path']
       }
     }
   },
@@ -287,6 +315,37 @@ async function* runToolStream(name, args, workspace, toolId, signal, settings, s
         yield { type: 'result', result: { ok: r.ok, output: r.output || '', error: r.error || '' } }
         return
       }
+      case 'run_tests': {
+        const cwd = args.cwd ? safeResolve(workspace, args.cwd) : workspace
+        let command = null
+        const pkgPath = path.join(cwd, 'package.json')
+        if (fs.existsSync(pkgPath)) {
+          try {
+            const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'))
+            if (pkg.scripts?.test) command = 'npm test'
+          } catch { }
+        }
+        if (!command && fs.existsSync(path.join(cwd, 'pytest.ini'))) command = 'python -m pytest'
+        if (!command && fs.existsSync(path.join(cwd, 'pyproject.toml'))) command = 'python -m pytest'
+        if (!command && fs.existsSync(path.join(cwd, 'go.mod'))) command = 'go test ./...'
+        if (!command && fs.existsSync(path.join(cwd, 'Cargo.toml'))) command = 'cargo test'
+        if (!command) {
+          yield { type: 'result', result: { ok: false, error: 'No se detectaron tests en esta carpeta. Revisa package.json (script "test"), pytest, Go o Cargo.' } }
+          return
+        }
+        const r = await runCommandStream(cwd, command, toolId, signal)
+        for (const chunk of r.chunks) yield { type: 'chunk', text: chunk }
+        yield { type: 'result', result: { ok: r.ok, output: r.output || '', error: r.error || '' } }
+        return
+      }
+      case 'read_pdf': {
+        const p = safeResolve(workspace, args.path)
+        if (path.extname(p).toLowerCase() !== '.pdf') throw new Error('No es un archivo PDF')
+        const res = await files.extract(p)
+        if (!res.ok || res.kind !== 'text') throw new Error(res.error || 'No se pudo leer el PDF')
+        yield { type: 'result', result: { ok: true, output: res.text.slice(0, MAX_OUTPUT) } }
+        return
+      }
       case 'read_file': {
         const p = safeResolve(workspace, args.path)
         const stat = fs.statSync(p)
@@ -453,13 +512,15 @@ function anthropicTools(settings) {
 async function* runAgentOpenAI(cfg, def, msgs, signal, workspace, settings, state) {
   const base = cfg.base || def.base || 'https://api.openai.com/v1'
   const isNewGen = /^(gpt-5|o3)/.test(msgs._model || '')
+  const maxTokens = msgs._maxTokens || 8192
   for (let i = 0; i < MAX_ITERS; i++) {
     const body = {
       model: msgs._model,
       messages: msgs.messages,
       tools: await buildTools(settings),
       stream: true,
-      ...(isNewGen ? { max_completion_tokens: 8192 } : { max_tokens: 8192 })
+      ...(msgs._temperature != null ? { temperature: msgs._temperature } : {}),
+      ...(isNewGen ? { max_completion_tokens: maxTokens } : { max_tokens: maxTokens })
     }
     const res = await fetch(`${base}/chat/completions`, {
       method: 'POST',
@@ -511,13 +572,15 @@ async function* execTool(name, args, toolId, signal, workspace, settings, state)
 async function* runAgentAnthropic(cfg, msgs, signal, workspace, settings, state) {
   const system = msgs.messages.filter((m) => m.role === 'system').map((m) => m.content).join('\n')
   const conv = msgs.messages.filter((m) => m.role !== 'system').map((m) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content }))
+  const maxTokens = msgs._maxTokens || 8192
   for (let i = 0; i < MAX_ITERS; i++) {
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'x-api-key': cfg.apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
       body: JSON.stringify({
         model: msgs._model,
-        max_tokens: 8192,
+        max_tokens: maxTokens,
+        ...(msgs._temperature != null ? { temperature: msgs._temperature } : {}),
         system: system || undefined,
         messages: conv,
         tools: await anthropicTools(settings),
@@ -623,7 +686,7 @@ async function* runAgentGemini(cfg, msgs, signal, workspace, settings, state) {
       contents,
       systemInstruction: system ? { parts: [{ text: system }] } : undefined,
       tools: await geminiTools(settings),
-      generationConfig: { maxOutputTokens: 8192 }
+      generationConfig: { maxOutputTokens: msgs._maxTokens || 8192, ...(msgs._temperature != null ? { temperature: msgs._temperature } : {}) }
     }
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(msgs._model)}:streamGenerateContent?alt=sse&key=${encodeURIComponent(cfg.apiKey)}`
     const res = await fetch(url, {
@@ -700,6 +763,8 @@ Reglas del modo plan:
   }
   const msgs = {
     _model: req.model,
+    _maxTokens: settings?.tuning?.[req.provider]?.maxTokens || 8192,
+    _temperature: settings?.tuning?.[req.provider]?.temperature,
     messages: [
       { role: 'system', content: system },
       { role: 'user', content: req.prompt }

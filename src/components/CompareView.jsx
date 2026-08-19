@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { GitCompareArrows, Send, X, Loader2, Check, Trash2, Plus, ChevronDown } from 'lucide-react'
 import Markdown from './Markdown.jsx'
 import { uid } from '../api.js'
+import i18n from '../i18n.js'
 
 export default function CompareView({ providers, runRequest, stopRequest, onOpenSettings, notify }) {
   const [selected, setSelected] = useState([])
@@ -14,13 +15,13 @@ export default function CompareView({ providers, runRequest, stopRequest, onOpen
 
   const toggleModel = (p, m) => {
     if (!p.local && !p.hasKey) {
-      notify?.(`Configura la API key de ${p.name} en Ajustes para usar sus modelos`)
-      return
-    }
+notify?.(i18n.t('compare.needKey', { name: p.name }))
+    return
+  }
     setSelected((s) => {
       const key = `${p.id}|${m}`
       if (s.some((x) => x.key === key)) return s.filter((x) => x.key !== key)
-      if (s.length >= 4) { notify?.('Máximo 4 modelos a la vez'); return s }
+      if (s.length >= 4) { notify?.(i18n.t('compare.maxModels')); return s }
       return [...s, { key, provider: p.id, model: m, color: p.color, label: `${p.name} · ${m}` }]
     })
   }
@@ -121,11 +122,11 @@ export default function CompareView({ providers, runRequest, stopRequest, onOpen
       <div className="chat-head">
         <div className="compare-title">
           <GitCompareArrows size={16} />
-          <h2>Comparar modelos</h2>
+          <h2>{i18n.t('compare.title')}</h2>
         </div>
         <div className="chat-head-right">
-          {running && <button className="btn danger" onClick={stopAll}><X size={13} /> Detener todo</button>}
-          {(columns.length > 0) && <button className="btn" onClick={clear}><Trash2 size={13} /> Limpiar</button>}
+          {running && <button className="btn danger" onClick={stopAll}><X size={13} /> {i18n.t('compare.stopAll')}</button>}
+          {(columns.length > 0) && <button className="btn" onClick={clear}><Trash2 size={13} /> {i18n.t('compare.clear')}</button>}
         </div>
       </div>
 
@@ -137,7 +138,7 @@ export default function CompareView({ providers, runRequest, stopRequest, onOpen
             </button>
           ))}
           <div className="picker-wrap">
-            <button className="btn" onClick={() => setPickerOpen(!pickerOpen)}><Plus size={14} /> Añadir modelo</button>
+            <button className="btn" onClick={() => setPickerOpen(!pickerOpen)}><Plus size={14} /> {i18n.t('compare.addModel')}</button>
             {pickerOpen && (
               <div className="popover">
                 {providers.map((p) => (
@@ -145,7 +146,7 @@ export default function CompareView({ providers, runRequest, stopRequest, onOpen
                     <div className="popover-group-head">
                       <span className="provider-dot" style={{ background: p.color }} /> {p.name}
                       {!p.local && !p.hasKey && (
-                        <button className="badge-btn" onClick={() => { setPickerOpen(false); onOpenSettings() }}>configurar clave</button>
+                        <button className="badge-btn" onClick={() => { setPickerOpen(false); onOpenSettings() }}>{i18n.t('compare.configureKey')}</button>
                       )}
                     </div>
                     <div className="popover-models">
@@ -154,10 +155,10 @@ export default function CompareView({ providers, runRequest, stopRequest, onOpen
                         const active = selected.some((s) => s.provider === p.id && s.model === m)
                         const locked = !p.local && !p.hasKey
                         return (
-                          <button key={m} className={`model-option ${active ? 'active' : ''} ${locked ? 'locked' : ''}`} onClick={() => toggleModel(p, m)} title={locked ? 'Configura la API key en Ajustes' : ''}>
+                          <button key={m} className={`model-option ${active ? 'active' : ''} ${locked ? 'locked' : ''}`} onClick={() => toggleModel(p, m)} title={locked ? i18n.t('compare.configureKeyTitle') : ''}>
                             {active && <Check size={12} />} {m}
-                            {locked && <span className="lock-tag">sin clave</span>}
-                            {p.local || p.id === 'groq' || (p.id === 'mistral' && /^(mistral-small|ministral)/.test(m)) || /^gemini-[0-9].*flash/i.test(m) || /:free$/i.test(m) ? <span className="free-tag">gratis</span> : null}
+                            {locked && <span className="lock-tag">{i18n.t('compare.noKey')}</span>}
+                            {p.local || p.id === 'groq' || (p.id === 'mistral' && /^(mistral-small|ministral)/.test(m)) || /^gemini-[0-9].*flash/i.test(m) || /:free$/i.test(m) ? <span className="free-tag">{i18n.t('compare.free')}</span> : null}
                           </button>
                         )
                       })}
@@ -172,12 +173,12 @@ export default function CompareView({ providers, runRequest, stopRequest, onOpen
           <textarea
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
-            placeholder="Escribe UNA pregunta y mándala a varios modelos a la vez para comparar sus respuestas…"
+            placeholder={i18n.t('compare.placeholder')}
             rows={3}
             onKeyDown={(e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) compare() }}
           />
           <button className="btn primary" onClick={compare} disabled={!prompt.trim() || !selected.length || running}>
-            {running ? <Loader2 size={15} className="spin" /> : <Send size={15} />} Comparar
+            {running ? <Loader2 size={15} className="spin" /> : <Send size={15} />} {i18n.t('compare.btn')}
           </button>
         </div>
       </div>
@@ -185,8 +186,8 @@ export default function CompareView({ providers, runRequest, stopRequest, onOpen
       <div className="compare-grid">
         {columns.length === 0 && (
           <div className="welcome">
-            <h2>Añade 2–4 modelos y compáralos</h2>
-            <p className="hint">Misma pregunta, mismas condiciones, respuestas lado a lado. Ideal para elegir tu IA favorita.</p>
+            <h2>{i18n.t('compare.welcome')}</h2>
+            <p className="hint">{i18n.t('compare.welcomeHint')}</p>
           </div>
         )}
         {columns.map((r) => (
@@ -196,12 +197,12 @@ export default function CompareView({ providers, runRequest, stopRequest, onOpen
               <strong>{r.label}</strong>
               {r.status === 'running' && <Loader2 size={13} className="spin" />}
               {r.status === 'done' && <span className="ok-ms">{((r.ms || 0) / 1000).toFixed(1)}s</span>}
-              {r.status === 'running' && <button className="icon-btn" onClick={() => stopOne(r.id)} title="Detener"><X size={13} /></button>}
+              {r.status === 'running' && <button className="icon-btn" onClick={() => stopOne(r.id)} title={i18n.t('compare.stop')}><X size={13} /></button>}
             </div>
             <div className="compare-col-body">
               {r.text && <Markdown text={r.text} />}
               {r.status === 'error' && <div className="error-box">{r.error}</div>}
-              {r.status === 'stopped' && <span className="hint">Detenido por el usuario</span>}
+              {r.status === 'stopped' && <span className="hint">{i18n.t('compare.stopped')}</span>}
               {r.status === 'running' && !r.text && <span className="cursor-blink" />}
             </div>
           </div>

@@ -5,18 +5,19 @@ import {
 } from 'lucide-react'
 import Markdown from './Markdown.jsx'
 import { uid, speak, cancelSpeech, bytesToBase64 } from '../api.js'
+import i18n from '../i18n.js'
 
-const SUGGESTIONS = [
-  { t: 'Explicar conceptos', q: 'Explícame qué es la inteligencia artificial como si tuviera 10 años' },
-  { t: 'Escribir emails', q: 'Escribe un email profesional solicitando un aumento de sueldo' },
-  { t: 'Depurar código', q: 'Ayúdame a depurar este código: (pega tu código)' },
-  { t: 'Ideas de negocio', q: 'Dame 5 ideas de negocios para 2026' },
-  { t: 'Traducir y mejorar', q: 'Traduce y mejora este texto: (pega tu texto)' },
-  { t: 'Rutinas de ejercicio', q: 'Crea una rutina de ejercicio semanal para principiantes' },
-  { t: 'Resumir documentos', q: 'Resume el siguiente texto en 5 puntos clave: (pega tu texto)' },
-  { t: 'Entrevista de trabajo', q: 'Prepárame para una entrevista de trabajo como desarrollador: hazme 10 preguntas difíciles' },
-  { t: 'Plan de estudio', q: 'Crea un plan de estudio de 4 semanas para aprender React desde cero' },
-  { t: 'Historias creativas', q: 'Escribe un cuento corto de ciencia ficción con un asistente de IA como protagonista' }
+const SUGGESTIONS = () => [
+  { t: i18n.t('suggest-explain-concepts'), q: i18n.t('suggest-explain-concepts-q') },
+  { t: i18n.t('suggest-write-emails'), q: i18n.t('suggest-write-emails-q') },
+  { t: i18n.t('suggest-debug-code'), q: i18n.t('suggest-debug-code-q') },
+  { t: i18n.t('suggest-business-ideas'), q: i18n.t('suggest-business-ideas-q') },
+  { t: i18n.t('suggest-translate-improve'), q: i18n.t('suggest-translate-improve-q') },
+  { t: i18n.t('suggest-exercise-routines'), q: i18n.t('suggest-exercise-routines-q') },
+  { t: i18n.t('suggest-summarize-docs'), q: i18n.t('suggest-summarize-docs-q') },
+  { t: i18n.t('suggest-job-interview'), q: i18n.t('suggest-job-interview-q') },
+  { t: i18n.t('suggest-study-plan'), q: i18n.t('suggest-study-plan-q') },
+  { t: i18n.t('suggest-creative-stories'), q: i18n.t('suggest-creative-stories-q') }
 ]
 
 function isFreeModel(m, p) {
@@ -33,11 +34,11 @@ function ModelPicker({ providers, providerId, model, onChange, onOpenSettings, o
 
   return (
     <div className="picker-wrap">
-      <button className="model-btn" onClick={() => setOpen(!open)} title="Cambiar modelo">
+      <button className="model-btn" onClick={() => setOpen(!open)} title={i18n.t('change-model')}>
         <span className="provider-dot" style={{ background: prov?.color || '#888' }} />
         <span className="model-btn-name">{prov?.name}</span>
         <strong>{model}</strong>
-        {prov?.imageModels?.includes(model) && <span className="img-tag">🎨 imagen</span>}
+        {prov?.imageModels?.includes(model) && <span className="img-tag">🎨 {i18n.t('img-tag')}</span>}
         <ChevronDown size={14} />
       </button>
       {open && (
@@ -48,7 +49,7 @@ function ModelPicker({ providers, providerId, model, onChange, onOpenSettings, o
                 <span className="provider-dot" style={{ background: p.color }} />
                 {p.name}
                 {!p.local && !p.hasKey && (
-                  <button className="badge-btn" onClick={() => { setOpen(false); onOpenSettings() }}>configurar clave</button>
+                  <button className="badge-btn" onClick={() => { setOpen(false); onOpenSettings() }}>{i18n.t('configure-key')}</button>
                 )}
               </div>
               <div className="popover-models">
@@ -59,14 +60,14 @@ function ModelPicker({ providers, providerId, model, onChange, onOpenSettings, o
                     onClick={() => { onChange(p.id, m); setOpen(false) }}
                   >
                     {m}
-                    {isFreeModel(m, p) && <span className="free-tag">gratis</span>}
-                    {p.imageModels?.includes(m) && <span className="img-tag">🎨 imagen</span>}
+                    {isFreeModel(m, p) && <span className="free-tag">{i18n.t('free')}</span>}
+                    {p.imageModels?.includes(m) && <span className="img-tag">🎨 {i18n.t('img-tag')}</span>}
                   </button>
                 ))}
                 {p.models.length === 0 && (
                   <span className="hint">
-                    {p.local ? 'Abre el servidor local y pulsa aquí para recargar' : 'Sin modelos disponibles'}
-                    <button className="badge-btn" onClick={onReloadProviders}>recargar</button>
+                    {p.local ? i18n.t('open-local-server-reload') : i18n.t('no-models')}
+                    <button className="badge-btn" onClick={onReloadProviders}>{i18n.t('reload')}</button>
                   </span>
                 )}
               </div>
@@ -76,7 +77,7 @@ function ModelPicker({ providers, providerId, model, onChange, onOpenSettings, o
             <input
               value={custom}
               onChange={(e) => setCustom(e.target.value)}
-              placeholder="Modelo personalizado (cualquier ID)"
+              placeholder={i18n.t('custom-model-placeholder')}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && custom.trim()) {
                   onChange(providerId, custom.trim())
@@ -90,7 +91,7 @@ function ModelPicker({ providers, providerId, model, onChange, onOpenSettings, o
               disabled={!custom.trim()}
               onClick={() => { onChange(providerId, custom.trim()); setCustom(''); setOpen(false) }}
             >
-              Usar
+              {i18n.t('use')}
             </button>
           </div>
         </div>
@@ -145,6 +146,8 @@ export default function ChatView({
   convRef.current = conv
 
   const tokenCount = useMemo(() => conv.messages.reduce((n, m) => n + Math.round((m.text || '').length / 4), 0), [conv.messages])
+
+  const suggestions = SUGGESTIONS()
 
   const curProvider = providers.find((p) => p.id === conv.provider)
   const imageModel = !!curProvider?.imageModels?.includes(conv.model)
@@ -282,11 +285,11 @@ useEffect(() => {
   }
 
   const SLASH_CMDS = [
-  { id: 'resumir', label: 'Resumir la conversación', desc: 'Haz un resumen con puntos clave', sys: 'Resume la conversación anterior de forma clara y concisa, con puntos clave.' },
-  { id: 'mejorar', label: 'Mejorar la última respuesta', desc: 'Corrige y mejora la respuesta anterior', sys: 'Eres un editor experto. Mejora la respuesta del asistente anterior: corrige errores, hazla más clara y completa, manteniendo el formato y el sentido.' },
-  { id: 'traducir', label: 'Traducir la última respuesta', desc: 'Traduce la respuesta anterior al español', sys: 'Eres un traductor experto. Traduce la respuesta del asistente anterior al español manteniendo tono, formato y significado.' },
-  { id: 'corto', label: 'Resumir la última respuesta', desc: 'Máximo 3 líneas', sys: 'Resume la última respuesta del asistente en un máximo de 3 líneas.' },
-  { id: 'explicar', label: 'Explicar la última respuesta', desc: 'Detalle paso a paso con ejemplos', sys: 'Explica la última respuesta del asistente con más detalle: paso a paso, con ejemplos y clarificando conceptos.' }
+  { id: 'resumir', label: i18n.t('slash-summarize-convo'), desc: i18n.t('slash-summarize-convo-desc'), sys: 'Resume la conversación anterior de forma clara y concisa, con puntos clave.' },
+  { id: 'mejorar', label: i18n.t('slash-improve-last'), desc: i18n.t('slash-improve-last-desc'), sys: 'Eres un editor experto. Mejora la respuesta del asistente anterior: corrige errores, hazla más clara y completa, manteniendo el formato y el sentido.' },
+  { id: 'traducir', label: i18n.t('slash-translate-last'), desc: i18n.t('slash-translate-last-desc'), sys: 'Eres un traductor experto. Traduce la respuesta del asistente anterior al español manteniendo tono, formato y significado.' },
+  { id: 'corto', label: i18n.t('slash-shorten-last'), desc: i18n.t('slash-shorten-last-desc'), sys: 'Resume la última respuesta del asistente en un máximo de 3 líneas.' },
+  { id: 'explicar', label: i18n.t('slash-explain-last'), desc: i18n.t('slash-explain-last-desc'), sys: 'Explica la última respuesta del asistente con más detalle: paso a paso, con ejemplos y clarificando conceptos.' }
 ]
 
 const ARTIFACT_RE = /```(html|svg)\n([\s\S]*?)```/g
@@ -314,10 +317,10 @@ function Artifact({ art, fileName }) {
         <span className="artifact-badge">{art.lang === 'html' ? '🌐' : '✨'} {art.lang.toUpperCase()}</span>
         <code className="artifact-file">{fileName}</code>
         <div className="artifact-actions">
-          <button className="icon-btn" title="Editar código" onClick={() => setEditing(!editing)}>{editing ? <Check size={13} /> : <Pencil size={13} />}</button>
+          <button className="icon-btn" title={i18n.t('edit-code')} onClick={() => setEditing(!editing)}>{editing ? <Check size={13} /> : <Pencil size={13} />}</button>
           <button
             className="icon-btn"
-            title="Copiar código"
+            title={i18n.t('copy-code')}
             onClick={async () => {
               await navigator.clipboard.writeText(code)
               setCopied(true)
@@ -326,7 +329,7 @@ function Artifact({ art, fileName }) {
           >
             {copied ? <Check size={13} /> : <Copy size={13} />}
           </button>
-          <button className="icon-btn" title="Descargar" onClick={() => window.api.exportText(fileName, code)}>
+          <button className="icon-btn" title={i18n.t('download')} onClick={() => window.api.exportText(fileName, code)}>
             <Download size={13} />
           </button>
         </div>
@@ -395,14 +398,14 @@ function Artifact({ art, fileName }) {
       const param = (slashMatch[2] || '').trim()
       const lastAsst = [...(base ?? convRef.current.messages)].reverse().find((m) => m.role === 'assistant' && m.text)
       if (cmd.id !== 'resumir' && !lastAsst && !param) {
-        notify('No hay una respuesta anterior para aplicar el comando')
+        notify(i18n.t('no-previous-response'))
         setPreparing(false)
         return
       }
       slashSys = cmd.sys
       if (cmd.id === 'resumir') {
-        text = param || 'Haz el resumen.'
-        userLabel = param ? `📝 Resumir: ${param}` : '📝 Resumir la conversación'
+        text = param || i18n.t('do-summary')
+        userLabel = param ? i18n.t('summarize-prefix', { text: param }) : i18n.t('summarize-label')
       } else {
         text = param || `Aplica el comando a esta respuesta:\n\n${lastAsst.text}`
         const icons = { mejorar: '✏️', traducir: '🌐', corto: '⚡', explicar: '🔍' }
@@ -586,7 +589,7 @@ function Artifact({ art, fileName }) {
           setTimeout(() => setAttachError(''), 5000)
         }
       } catch (e) {
-        setAttachError(e.message || 'No se pudo leer el archivo')
+        setAttachError(e.message || i18n.t('file-read-error'))
         setTimeout(() => setAttachError(''), 5000)
       }
     }
@@ -620,7 +623,7 @@ function Artifact({ art, fileName }) {
       rec.start()
       setRecState('recording')
     } catch {
-      setAttachError('Micrófono no disponible')
+      setAttachError(i18n.t('mic-unavailable'))
       setTimeout(() => setAttachError(''), 5000)
     }
   }
@@ -857,7 +860,7 @@ ${mdToHtml(convoMessagesMd())}
   const copyConvo = async () => {
     try {
       await navigator.clipboard.writeText(convoMarkdown())
-      notify?.('Conversación copiada al portapapeles')
+      notify?.(i18n.t('convo-copied'))
     } catch { }
   }
 
@@ -877,14 +880,14 @@ ${mdToHtml(convoMessagesMd())}
       }}
     >
       {dragging && (
-        <div className="drop-overlay"><Paperclip size={30} /> Suelta los archivos para adjuntarlos</div>
+        <div className="drop-overlay"><Paperclip size={30} /> {i18n.t('drop-files')}</div>
       )}
       <div className="chat-head">
         <ModelPicker providers={providers} providerId={conv.provider} model={conv.model} onChange={changeModel} onOpenSettings={onOpenSettings} onReloadProviders={onReloadProviders} />
         <div className="chat-head-right">
-          {tokenCount > 0 && <span className="tok-badge" title="Aproximado: ~4 caracteres por token">~{tokenCount} tok</span>}
+          {tokenCount > 0 && <span className="tok-badge" title={i18n.t('token-approx')}>~{tokenCount} tok</span>}
           {sending && (
-            <button className="btn danger" onClick={stop}><Square size={13} /> Detener</button>
+            <button className="btn danger" onClick={stop}><Square size={13} /> {i18n.t('stop')}</button>
           )}
           <button
             className="icon-btn"
@@ -892,16 +895,16 @@ ${mdToHtml(convoMessagesMd())}
               const last = conv.messages.filter((m) => m.role === 'assistant' && m.text).at(-1)
               if (last) speak(last.text, { ...settings, voice: { ...(settings?.voice || {}), enabled: true } })
             }}
-            title="Escuchar última respuesta"
+            title={i18n.t('listen-last')}
           >
             <Volume2 size={16} />
           </button>
-          <button className="icon-btn" onClick={copyConvo} title="Copiar conversación completa"><Copy size={16} /></button>
-          <button className="icon-btn" onClick={exportConvo} title="Exportar a Markdown"><Download size={16} /></button>
-          <button className="icon-btn" onClick={exportHtml} title="Exportar a HTML"><FileCode2 size={16} /></button>
-          <button className="icon-btn" onClick={exportPdf} title="Exportar a PDF"><FileText size={16} /></button>
-          <button className="icon-btn" onClick={exportDocx} title="Exportar a Word (.docx)"><FileDown size={16} /></button>
-          <button className="icon-btn" onClick={onOpenSettings} title="Ajustes"><Settings size={16} /></button>
+          <button className="icon-btn" onClick={copyConvo} title={i18n.t('copy-full-convo')}><Copy size={16} /></button>
+          <button className="icon-btn" onClick={exportConvo} title={i18n.t('export-md')}><Download size={16} /></button>
+          <button className="icon-btn" onClick={exportHtml} title={i18n.t('export-html')}><FileCode2 size={16} /></button>
+          <button className="icon-btn" onClick={exportPdf} title={i18n.t('export-pdf')}><FileText size={16} /></button>
+          <button className="icon-btn" onClick={exportDocx} title={i18n.t('export-docx')}><FileDown size={16} /></button>
+          <button className="icon-btn" onClick={onOpenSettings} title={i18n.t('settings')}><Settings size={16} /></button>
         </div>
       </div>
 
@@ -917,41 +920,50 @@ ${mdToHtml(convoMessagesMd())}
                 if (e.key === 'Enter') { e.preventDefault(); jumpSearch(e.shiftKey ? -1 : 1) }
                 if (e.key === 'Escape') { setSearchOpen(false); setSearchQ(''); setSearchIdx(0); searchResultsRef.current = [] }
               }}
-              placeholder="Buscar en esta conversación…"
+              placeholder={i18n.t('search-in-convo')}
             />
             <span className="conv-search-count">
               {searchResultsRef.current.length ? `${searchIdx + 1}/${searchResultsRef.current.length}` : ''}
             </span>
-            <button className="icon-btn small" onClick={() => jumpSearch(-1)} title="Anterior (Shift+Enter)"><ChevronUp size={13} /></button>
-            <button className="icon-btn small" onClick={() => jumpSearch(1)} title="Siguiente (Enter)"><ChevronDown size={13} /></button>
-            <button className="icon-btn small" onClick={() => { setSearchOpen(false); setSearchQ(''); setSearchIdx(0); searchResultsRef.current = [] }} title="Cerrar"><X size={13} /></button>
+            <button className="icon-btn small" onClick={() => jumpSearch(-1)} title={i18n.t('previous-shift-enter')}><ChevronUp size={13} /></button>
+            <button className="icon-btn small" onClick={() => jumpSearch(1)} title={i18n.t('next-enter')}><ChevronDown size={13} /></button>
+            <button className="icon-btn small" onClick={() => { setSearchOpen(false); setSearchQ(''); setSearchIdx(0); searchResultsRef.current = [] }} title={i18n.t('close')}><X size={13} /></button>
           </div>
         )}
         {empty ? (
           <div className="welcome">
             <div className="welcome-logo"><Sparkles size={34} /></div>
-            <h2>¿Qué quieres crear hoy?</h2>
+            <h2>{i18n.t('what-create-today')}</h2>
             <p className="hint">
               {hasAnyProvider
-                ? 'Elige el modelo en la parte superior. Puedes comparar modelos, buscar en web, adjuntar archivos e incluso hablar por micrófono.'
-                : 'Conecta tus IA: ve a Ajustes y pega tus API keys (Claude, GPT, Gemini…), o instala Ollama para usar modelos locales gratis.'}
+                ? i18n.t('welcome-hint-has-provider')
+                : i18n.t('welcome-hint-no-provider')}
             </p>
             <div className="welcome-stats">
-              <div className="stat"><strong>{convos.length}</strong><span>conversaciones</span></div>
-              <div className="stat"><strong>{convos.reduce((a, c) => a + (c.count || 0), 0)}</strong><span>mensajes</span></div>
-              <div className="stat"><strong>{providers.filter((p) => p.hasKey || p.local).length}</strong><span>IA conectadas</span></div>
+              <div className="stat"><strong>{convos.length}</strong><span>{i18n.t('stat-conversations')}</span></div>
+              <div className="stat"><strong>{convos.reduce((a, c) => a + (c.count || 0), 0)}</strong><span>{i18n.t('stat-messages')}</span></div>
+              <div className="stat"><strong>{providers.filter((p) => p.hasKey || p.local).length}</strong><span>{i18n.t('stat-connected-ai')}</span></div>
             </div>
             <div className="welcome-actions">
-              <button className="btn primary" onClick={() => onViewChange('compare')}><GitCompareArrows size={15} /> Comparar modelos</button>
-              <button className="btn" onClick={() => onViewChange('agent')}><Bot size={15} /> Agente IA</button>
+              <button className="btn primary" onClick={() => onViewChange('compare')}><GitCompareArrows size={15} /> {i18n.t('compare-models')}</button>
+              <button className="btn" onClick={() => onViewChange('agent')}><Bot size={15} /> {i18n.t('agent-ai')}</button>
             </div>
             <div className="suggestions">
-              {SUGGESTIONS.map((s) => (
+              {suggestions.map((s) => (
                 <button key={s.t} className="suggestion" title={s.q} onClick={() => { setInput(s.q); inputRef.current?.focus() }}>
                   <Zap size={13} /> {s.t}
                 </button>
               ))}
             </div>
+            {settings?.templates?.length > 0 && (
+              <div className="suggestions" style={{ marginTop: 10 }}>
+                {settings.templates.map((t) => (
+                  <button key={t.id} className="suggestion" title={t.text} onClick={() => applyTemplate(t)}>
+                    <Bookmark size={13} /> {t.title || t.name}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         ) : (
           conv.messages.map((m) => {
@@ -962,12 +974,12 @@ ${mdToHtml(convoMessagesMd())}
                     <div className="edit-box">
                       <textarea value={editText} onChange={(e) => setEditText(e.target.value)} autoFocus />
                       <div className="edit-actions">
-                        <button className="btn" onClick={() => setEditingId(null)}>Cancelar</button>
+                        <button className="btn" onClick={() => setEditingId(null)}>{i18n.t('cancel')}</button>
                         <button className="btn primary" onClick={() => {
                           const idx = conv.messages.findIndex((x) => x.id === m.id)
                           updateConv({ ...conv, messages: [...conv.messages.slice(0, idx), { ...m, text: editText }], updatedAt: Date.now() })
                           setEditingId(null)
-                        }}>Guardar</button>
+                        }}>{i18n.t('save')}</button>
                       </div>
                     </div>
                   ) : (
@@ -983,13 +995,13 @@ ${mdToHtml(convoMessagesMd())}
                         <div className="md md-user">{m.text}</div>
                       </div>
                       <div className="msg-actions">
-                        <button className="icon-btn" title="Editar" onClick={() => { setEditingId(m.id); setEditText(m.text) }}><Pencil size={13} /></button>
-                        <button className="icon-btn" title="Borrar mensaje" onClick={() => setDelMenuId(delMenuId === m.id ? null : m.id)}><Trash2 size={13} /></button>
+                        <button className="icon-btn" title={i18n.t('edit')} onClick={() => { setEditingId(m.id); setEditText(m.text) }}><Pencil size={13} /></button>
+                        <button className="icon-btn" title={i18n.t('delete-message')} onClick={() => setDelMenuId(delMenuId === m.id ? null : m.id)}><Trash2 size={13} /></button>
                       </div>
                       {delMenuId === m.id && (
                         <div className="del-menu" onClick={(e) => e.stopPropagation()}>
-                          <button onClick={() => { deleteOne(m.id); setDelMenuId(null) }}><MessageSquareX size={13} /> Borrar solo este mensaje</button>
-                          <button onClick={() => { deleteFrom(m.id); setDelMenuId(null) }}><Trash2 size={13} /> Borrar este y los siguientes</button>
+                          <button onClick={() => { deleteOne(m.id); setDelMenuId(null) }}><MessageSquareX size={13} /> {i18n.t('delete-only-this')}</button>
+                          <button onClick={() => { deleteFrom(m.id); setDelMenuId(null) }}><Trash2 size={13} /> {i18n.t('delete-this-and-following')}</button>
                         </div>
                       )}
                     </>
@@ -1001,15 +1013,15 @@ ${mdToHtml(convoMessagesMd())}
               <div key={m.id} id={`msg-${m.id}`} className="msg assistant">
                 <div className="avatar" style={{ background: providers.find((p) => p.id === conv.provider)?.color }}>N</div>
                 <div className="assistant-body">
-                  {m.search && <div className="search-note"><Search size={12} /> Esta respuesta incluye búsqueda web</div>}
+                  {m.search && <div className="search-note"><Search size={12} /> {i18n.t('includes-web-search')}</div>}
                   <div className="md">
                     {m.reasoning && !m.streaming && (
                       <details className="reasoning-box">
-                        <summary>💭 Razonamiento del modelo</summary>
+                        <summary>{i18n.t('model-reasoning')}</summary>
                         <div className="reasoning-content">{m.reasoning}</div>
                       </details>
                     )}
-                    {m.text ? <Markdown text={m.text} /> : m.streaming ? <span className="gen-hint"><Loader2 size={13} className="spin" /> Generando imagen…</span> : <span className="cursor-blink" />}
+                    {m.text ? <Markdown text={m.text} /> : m.streaming ? <span className="gen-hint"><Loader2 size={13} className="spin" /> {i18n.t('generating-image')}</span> : <span className="cursor-blink" />}
                     {m.streaming && m.text && <span className="cursor-blink" />}
                     {!m.streaming && extractArtifacts(m.text || '').map((art) => (
                       <Artifact key={art.id} art={art} fileName={`artifact-${m.id.slice(-6)}.${art.lang}`} />
@@ -1017,8 +1029,8 @@ ${mdToHtml(convoMessagesMd())}
                     {m.error && (
                       <div className="error-box retry-box">
                         <span>{m.error}</span>
-                        <button className="retry-btn" onClick={regenerate} title="Reintentar con el mismo mensaje">
-                          <RefreshCw size={12} /> Reintentar
+                        <button className="retry-btn" onClick={regenerate} title={i18n.t('retry-same-message')}>
+                          <RefreshCw size={12} /> {i18n.t('retry')}
                         </button>
                       </div>
                     )}
@@ -1030,8 +1042,8 @@ ${mdToHtml(convoMessagesMd())}
                           <img src={`data:${img.mime};base64,${img.data}`} alt={img.name} title={img.name} />
                           {!m.streaming && (
                             <div className="gen-img-actions">
-                              <button className="icon-btn" title="Descargar imagen" onClick={() => window.api.saveImageFile(img.name, img.data, img.mime)}><Download size={13} /></button>
-                              <button className="icon-btn" title="Editar esta imagen en el chat" onClick={() => setAttachments([{ id: uid(), name: img.name, kind: 'image', mime: img.mime, data: img.data }])}><Pencil size={13} /></button>
+                              <button className="icon-btn" title={i18n.t('download-image')} onClick={() => window.api.saveImageFile(img.name, img.data, img.mime)}><Download size={13} /></button>
+                              <button className="icon-btn" title={i18n.t('edit-image-chat')} onClick={() => setAttachments([{ id: uid(), name: img.name, kind: 'image', mime: img.mime, data: img.data }])}><Pencil size={13} /></button>
                             </div>
                           )}
                         </div>
@@ -1040,16 +1052,16 @@ ${mdToHtml(convoMessagesMd())}
                   )}
                   {!m.streaming && (
                     <div className="msg-actions">
-                      <button className="icon-btn" title="Copiar" onClick={() => copyText(m)}>{copiedId === m.id ? <Check size={13} /> : <Copy size={13} />}</button>
-                      <button className="icon-btn" title="Responder de nuevo" onClick={regenerate}><RefreshCw size={13} /></button>
-                      <button className="icon-btn" title="Escuchar" onClick={() => speak(m.text, { ...settings, voice: { ...(settings?.voice || {}), enabled: true } })}><Volume2 size={13} /></button>
-                      <button className="icon-btn" title="Borrar mensaje" onClick={() => setDelMenuId(delMenuId === m.id ? null : m.id)}><Trash2 size={13} /></button>
+                      <button className="icon-btn" title={i18n.t('copy')} onClick={() => copyText(m)}>{copiedId === m.id ? <Check size={13} /> : <Copy size={13} />}</button>
+                      <button className="icon-btn" title={i18n.t('reply-again')} onClick={regenerate}><RefreshCw size={13} /></button>
+                      <button className="icon-btn" title={i18n.t('listen')} onClick={() => speak(m.text, { ...settings, voice: { ...(settings?.voice || {}), enabled: true } })}><Volume2 size={13} /></button>
+                      <button className="icon-btn" title={i18n.t('delete-message')} onClick={() => setDelMenuId(delMenuId === m.id ? null : m.id)}><Trash2 size={13} /></button>
                     </div>
                   )}
                   {!m.streaming && delMenuId === m.id && (
                     <div className="del-menu" onClick={(e) => e.stopPropagation()}>
-                      <button onClick={() => { deleteOne(m.id); setDelMenuId(null) }}><MessageSquareX size={13} /> Borrar solo este mensaje</button>
-                      <button onClick={() => { deleteFrom(m.id); setDelMenuId(null) }}><Trash2 size={13} /> Borrar este y los siguientes</button>
+                      <button onClick={() => { deleteOne(m.id); setDelMenuId(null) }}><MessageSquareX size={13} /> {i18n.t('delete-only-this')}</button>
+                      <button onClick={() => { deleteFrom(m.id); setDelMenuId(null) }}><Trash2 size={13} /> {i18n.t('delete-this-and-following')}</button>
                     </div>
                   )}
                 </div>
@@ -1058,7 +1070,7 @@ ${mdToHtml(convoMessagesMd())}
           })
         )}
         {showScrollBtn && !empty && (
-          <button className="scroll-bottom-btn" onClick={scrollToBottom} title="Ir al final"><ChevronDown size={16} /></button>
+          <button className="scroll-bottom-btn" onClick={scrollToBottom} title={i18n.t('go-to-bottom')}><ChevronDown size={16} /></button>
         )}
       </div>
 
@@ -1069,24 +1081,24 @@ ${mdToHtml(convoMessagesMd())}
             <>
               <label className="row-check">
                 <input type="checkbox" checked={!!conv.showThinking} onChange={(e) => updateConv({ ...conv, showThinking: e.target.checked })} />
-                <Brain size={14} /> Mostrar razonamiento del modelo
+                <Brain size={14} /> {i18n.t('show-model-reasoning')}
               </label>
               <div className="row-slider">
-                <span>Esfuerzo de razonamiento</span>
+                <span>{i18n.t('reasoning-effort')}</span>
                 <select className="thinking-select" value={conv.reasoningEffort || ''} onChange={(e) => updateConv({ ...conv, reasoningEffort: e.target.value })}>
-                  <option value="">Automático</option>
-                  <option value="bajo">Bajo</option>
-                  <option value="medio">Medio</option>
-                  <option value="alto">Alto</option>
+                  <option value="">{i18n.t('automatic')}</option>
+                  <option value="bajo">{i18n.t('low')}</option>
+                  <option value="medio">{i18n.t('medium')}</option>
+                  <option value="alto">{i18n.t('high')}</option>
                 </select>
               </div>
             </>
           )}
           {!imageModel && (settings?.projects || []).length > 0 && (
             <div className="row-slider">
-              <span>Proyecto de conocimiento</span>
+              <span>{i18n.t('knowledge-project')}</span>
               <select className="thinking-select" value={conv.ragProject || ''} onChange={(e) => updateConv({ ...conv, ragProject: e.target.value })}>
-                <option value="">Sin proyecto</option>
+                <option value="">{i18n.t('no-project')}</option>
                 {settings.projects.map((p) => (
                   <option key={p.id} value={p.id}>{p.name}</option>
                 ))}
@@ -1095,10 +1107,10 @@ ${mdToHtml(convoMessagesMd())}
           )}
           <label className="row-check">
             <input type="checkbox" checked={webSearch} onChange={(e) => setWebSearch(e.target.checked)} />
-            <Globe size={14} /> Buscar en web antes de responder
+            <Globe size={14} /> {i18n.t('web-search-before')}
           </label>
             <div className="row-slider">
-              <span>Creatividad (temperatura)</span>
+              <span>{i18n.t('creativity-temperature')}</span>
               <input
                 type="range" min="0" max="2" step="0.1"
                 value={conv.temperature ?? 0.7}
@@ -1111,13 +1123,13 @@ ${mdToHtml(convoMessagesMd())}
                 const s = await window.api.saveSettings({ voice: { ...(settings?.voice || {}), enabled: e.target.checked } })
                 onSaveSettings?.(s)
               }} />
-              <Volume2 size={14} /> Responder en voz
+              <Volume2 size={14} /> {i18n.t('respond-voice')}
             </label>
             <textarea
               className="system-input"
               value={conv.system || ''}
               onChange={(e) => updateConv({ ...conv, system: e.target.value })}
-              placeholder="Instrucciones del sistema (opcional): define la personalidad o reglas de la IA para este chat…"
+              placeholder={i18n.t('system-instructions-placeholder')}
             />
           </div>
         )}
@@ -1126,22 +1138,22 @@ ${mdToHtml(convoMessagesMd())}
           <div className="img-controls">
             <div className="img-seg">
               {[
-                { id: 'square', label: 'Cuadrado' },
-                { id: 'wide', label: 'Ancho' },
-                { id: 'tall', label: 'Alto' }
+                { id: 'square', label: i18n.t('square') },
+                { id: 'wide', label: i18n.t('wide') },
+                { id: 'tall', label: i18n.t('tall') }
               ].map((f) => (
                 <button
                   key={f.id}
                   className={`seg-btn ${(conv.imgFormat || 'square') === f.id ? 'active' : ''}`}
                   onClick={() => updateConv({ ...conv, imgFormat: f.id })}
-                  title="Formato de la imagen"
+                  title={i18n.t('image-format')}
                 >
                   {f.label}
                 </button>
               ))}
             </div>
             {conv.provider === 'openai' && (
-              <div className="img-seg" title="Cantidad de imágenes">
+              <div className="img-seg" title={i18n.t('image-count')}>
                 {[1, 2, 3, 4].map((n) => (
                   <button
                     key={n}
@@ -1154,9 +1166,9 @@ ${mdToHtml(convoMessagesMd())}
               </div>
             )}
             {conv.messages.some((m) => m.images?.length) && (
-              <label className="row-check img-edit-toggle" title="Si está activo, un mensaje nuevo sin foto adjunta edita la última imagen generada">
+              <label className="row-check img-edit-toggle" title={i18n.t('edit-previous-tip')}>
                 <input type="checkbox" checked={conv.imgEditLast !== false} onChange={(e) => updateConv({ ...conv, imgEditLast: e.target.checked })} />
-                <Pencil size={13} /> Editar la anterior
+                <Pencil size={13} /> {i18n.t('edit-previous')}
               </label>
             )}
           </div>
@@ -1216,20 +1228,20 @@ ${mdToHtml(convoMessagesMd())}
           )}
         <div className="input-bar">
           {!imageModel && (
-            <button className={`icon-btn ${webSearch ? 'on' : ''}`} onClick={() => setWebSearch(!webSearch)} title="Buscar en web">
+            <button className={`icon-btn ${webSearch ? 'on' : ''}`} onClick={() => setWebSearch(!webSearch)} title={i18n.t('search-web')}>
               <Globe size={17} />
             </button>
           )}
           {!imageModel && settings?.templates?.length > 0 && (
             <div className="tpl-wrap">
-              <button className="icon-btn" onClick={() => setTplOpen(!tplOpen)} title="Insertar plantilla">
+              <button className="icon-btn" onClick={() => setTplOpen(!tplOpen)} title={i18n.t('insert-template')}>
                 <Bookmark size={17} />
               </button>
               {tplOpen && (
                 <div className="tpl-menu">
                   {settings.templates.map((t) => (
                     <div key={t.id} className="slash-item" onMouseDown={() => applyTemplate(t)}>
-                      <span className="slash-name">{t.name}</span>
+                      <span className="slash-name">{t.title || t.name}</span>
                       <span className="slash-desc">{t.text.slice(0, 60)}{t.text.length > 60 ? '…' : ''}</span>
                     </div>
                   ))}
@@ -1237,10 +1249,10 @@ ${mdToHtml(convoMessagesMd())}
               )}
             </div>
           )}
-          <button className={`icon-btn ${showOptions ? 'on' : ''}`} onClick={() => setShowOptions(!showOptions)} title="Opciones">
+          <button className={`icon-btn ${showOptions ? 'on' : ''}`} onClick={() => setShowOptions(!showOptions)} title={i18n.t('options')}>
             <ChevronDown size={17} />
           </button>
-          <button className="icon-btn" onClick={() => fileRef.current?.click()} title={imageModel ? 'Adjuntar una foto para editarla' : 'Adjuntar archivo o imagen'}>
+          <button className="icon-btn" onClick={() => fileRef.current?.click()} title={imageModel ? i18n.t('attach-photo-edit') : i18n.t('attach-file')}>
             <Paperclip size={17} />
           </button>
           <input ref={fileRef} type="file" multiple hidden onChange={(e) => { onFiles([...e.target.files]); e.target.value = '' }} />
@@ -1248,7 +1260,7 @@ ${mdToHtml(convoMessagesMd())}
             ref={inputRef}
             className="input"
             value={input}
-            placeholder={searching ? 'Buscando en web…' : imageModel ? 'Describe la imagen (o adjunta una foto para editarla)…' : 'Escribe tu mensaje… (Enter para enviar, Shift+Enter para salto de línea) @ para referenciar archivos'}
+            placeholder={searching ? i18n.t('searching-web') : imageModel ? i18n.t('image-input-placeholder') : i18n.t('input-placeholder')}
             onChange={(e) => {
               const v = e.target.value
               setInput(v)
@@ -1303,21 +1315,21 @@ ${mdToHtml(convoMessagesMd())}
           <button
             className={`icon-btn mic ${recState !== 'idle' ? 'rec' : ''}`}
             onClick={toggleMic}
-            title={recState === 'idle' ? 'Dictar por voz (Whisper)' : recState === 'recording' ? 'Detener grabación' : 'Transcribiendo…'}
+            title={recState === 'idle' ? i18n.t('dictate-voice') : recState === 'recording' ? i18n.t('stop-recording') : i18n.t('transcribing')}
           >
             {recState === 'idle' ? <Mic size={17} /> : recState === 'recording' ? <Square size={17} /> : <Loader2 size={17} className="spin" />}
           </button>
-          <button className="btn primary send-btn" onClick={() => send()} disabled={sending || preparing || (!input.trim() && !attachments.length)} title={imageModel ? 'Generar imagen' : 'Enviar'}>
+          <button className="btn primary send-btn" onClick={() => send()} disabled={sending || preparing || (!input.trim() && !attachments.length)} title={imageModel ? i18n.t('generate-image') : i18n.t('send')}>
             {sending || preparing ? <Loader2 size={16} className="spin" /> : imageModel ? <Sparkles size={16} /> : <Send size={16} />}
-            {imageModel && !sending && !preparing && <span className="send-label">Generar</span>}
+            {imageModel && !sending && !preparing && <span className="send-label">{i18n.t('generate')}</span>}
           </button>
         </div>
         </div>
         <div className="input-foot">
           <span className="hint">
-            {imageModel && !searchFailed && <span className="img-hint">🎨 Este modelo genera y edita imágenes en el chat: escribe una descripción o adjunta una foto y pide cambios.</span>}
-            {searchFailed && <span className="search-fail">No se encontraron resultados web; respondo sin búsqueda.</span>}
-            {recState === 'recording' && <span className="rec-hint">● Grabando… pulsa de nuevo para detener</span>}
+            {imageModel && !searchFailed && <span className="img-hint">{i18n.t('img-hint')}</span>}
+            {searchFailed && <span className="search-fail">{i18n.t('no-web-results')}</span>}
+            {recState === 'recording' && <span className="rec-hint">{i18n.t('recording-hint')}</span>}
           </span>
         </div>
       </div>
