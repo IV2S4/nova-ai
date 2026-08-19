@@ -7,6 +7,7 @@ const { findRelevantSkills } = require('./skills')
 const memory = require('./memory')
 const mcp = require('./mcp')
 const files = require('./files')
+const { chunkText, scoreChunk } = require('./projects')
 
 const MAX_ITERS = 25
 const MAX_OUTPUT = 30000
@@ -124,6 +125,46 @@ const TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'search_codebase',
+      description: 'Busca en el código del proyecto (como @codebase): indexa los archivos sobre la marcha y devuelve los fragmentos más relevantes para una consulta, con sus rutas y una puntuación. Úsala para localizar funciones, variables, estilos o conceptos sin leer archivo por archivo.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Qué buscar: función, variable, clase, concepto, texto…' },
+          path: { type: 'string', description: 'Subcarpeta del proyecto donde buscar (opcional)' }
+        },
+        required: ['query']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'delegate_task',
+      description: 'Lanza subagentes en paralelo (máx. 4, estilo Claude Code) para analizar archivos o investigar tareas independientes por ti. Cada subagente recibe una tarea y archivos de contexto y devuelve su análisis. NO pueden editar archivos ni ejecutar comandos: aplica tú los cambios. Úsala para dividir el trabajo o analizar varios archivos a la vez.',
+      parameters: {
+        type: 'object',
+        properties: {
+          subtasks: {
+            type: 'array',
+            description: 'Sub-tareas independientes (1 a 4, se ejecutan en paralelo)',
+            items: {
+              type: 'object',
+              properties: {
+                task: { type: 'string', description: 'Qué debe analizar el subagente, con instrucciones concretas' },
+                files: { type: 'array', items: { type: 'string' }, description: 'Archivos del proyecto relevantes para esa sub-tarea (opcional, máx. 8)' }
+              },
+              required: ['task']
+            }
+          }
+        },
+        required: ['subtasks']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
       name: 'web_search',
       description: 'Busca información actualizada en internet (documentación, errores, ejemplos).',
       parameters: {
@@ -140,7 +181,9 @@ const TOOLS = [
 const SYSTEM_PROMPT = `Eres un agente de programación experto que trabaja dentro del proyecto del usuario, al estilo de Claude Code o Cursor.
 
 Reglas de trabajo:
-- Primero explora el proyecto (list_files, read_file de package.json, README, etc.) antes de actuar.
+- Primero explora el proyecto (list_files, read_file de package.json, README, search_codebase, etc.) antes de actuar.
+- Para localizar código usa search_codebase (búsqueda en todo el código, como @codebase).
+- Para tareas independientes o varios archivos a la vez usa delegate_task: lanza subagentes en paralelo y aplica tú los cambios.
 - Para compilar, probar o inspeccionar usa run_command. Los comandos pueden tardar: espera siempre su salida.
 - Para implementar cambios usa write_file (archivos nuevos o completos) o edit_file (cambios concretos en archivos grandes) y luego verifica con run_command (build o pruebas).
 - Si necesitas información reciente usa web_search.
@@ -418,6 +461,83 @@ async function* runToolStream(name, args, workspace, toolId, signal, settings, s
         yield { type: 'result', result: { ok: true, output: `${applied} edición(es) aplicada(s) en ${path.relative(workspace, p)}` } }
         return
       }
+      case 'search_codebase': {
+        const q = String(args.query || '').trim()
+        if (!q) throw new Error('Consulta vacía')
+        const root = safeResolve(workspace, args.path)
+        const queryTokens = q.toLowerCase().split(/[^a-z0-9áéíóúñü]+/i).filter((w) => w.length > 2)
+        if (!queryTokens.length) throw new Error('Consulta demasiado corta')
+        const IGNORE = new Set(['node_modules', '.git', 'dist', 'build', 'out', '.next', '.vite', '.turbo', '__pycache__', '.venv', 'venv', '.idea', '.vscode', 'coverage', '.cache', '.parcel-cache', 'vendor'])
+        const TEXT_EXTS = new Set(['.js', '.jsx', '.ts', '.tsx', '.py', '.json', '.md', '.html', '.htm', '.css', '.scss', '.sass', '.less', '.vue', '.svelte', '.rs', '.go', '.java', '.c', '.h', '.cpp', '.hpp', '.cs', '.php', '.rb', '.sh', '.ps1', '.yml', '.yaml', '.toml', '.ini', '.cfg', '.conf', '.txt', '.sql', '.xml', '.swift', '.kt', '.dart', '.lua', '.r', '.scala', '.zig', '.astro'])
+        const filesFound = []
+        const walk = (dir, depth) => {
+          if (filesFound.length >= 300) return
+          let entries
+          try { entries = fs.readdirSync(dir, { withFileTypes: true }) } catch { return }
+          for (const e of entries) {
+            if (filesFound.length >= 300) return
+            if (IGNORE.has(e.name)) continue
+            const full = path.join(dir, e.name)
+            if (e.isDirectory()) {
+              if (depth < 8) walk(full, depth + 1)
+            } else if (e.isFile() && TEXT_EXTS.has(path.extname(e.name).toLowerCase())) {
+              filesFound.push(full)
+            }
+          }
+        }
+        walk(root, 0)
+        const hits = []
+        for (const f of filesFound) {
+          let content
+          try {
+            const stat = fs.statSync(f)
+            if (stat.size > 300 * 1024) continue
+            content = fs.readFileSync(f, 'utf8')
+          } catch { continue }
+          for (const chunk of chunkText(content)) {
+            const score = scoreChunk(chunk, queryTokens)
+            if (score > 0) hits.push({ rel: path.relative(workspace, f).split(path.sep).join('/'), score, chunk })
+          }
+        }
+        hits.sort((a, b) => b.score - a.score)
+        const top = hits.slice(0, 12)
+        if (!top.length) {
+          yield { type: 'result', result: { ok: true, output: `Sin resultados para "${q}" en el código del proyecto.` } }
+          return
+        }
+        const out = top
+          .map((h, i) => `[${i + 1}] ${h.rel} (score ${h.score.toFixed(1)})\n${h.chunk.slice(0, 700)}`)
+          .join('\n\n---\n\n')
+        yield { type: 'result', result: { ok: true, output: out } }
+        return
+      }
+      case 'delegate_task': {
+        const depth = (state?.delegateDepth || 0) + 1
+        if (depth > 2) throw new Error('Límite de profundidad de subagentes alcanzado (2). Resuelve la tarea tú directamente.')
+        const subs = Array.isArray(args.subtasks)
+          ? args.subtasks.slice(0, 4)
+          : [{ task: args.task, files: args.files }]
+        if (!subs.length || subs.some((s) => !String(s?.task || '').trim())) {
+          throw new Error('Proporciona al menos una sub-tarea (campo "task").')
+        }
+        const results = await Promise.all(subs.map((s) => {
+          const ctx = []
+          for (const f of (Array.isArray(s.files) ? s.files : []).slice(0, 8)) {
+            const p = safeResolve(workspace, f)
+            if (!fs.existsSync(p) || !fs.statSync(p).isFile()) {
+              throw new Error(`Archivo no encontrado para el subagente: ${f}`)
+            }
+            ctx.push(`### Archivo: ${f}\n${fs.readFileSync(p, 'utf8').slice(0, 12000)}`)
+          }
+          return runSubagent(state, String(s.task).trim(), ctx, depth)
+        }))
+        const out = results
+          .map((r, i) => `--- Subagente ${i + 1}${subs[i]?.task ? ` («${String(subs[i].task).slice(0, 90)}»)` : ''} ${r.ok ? '' : '(error)'} ---\n${r.ok ? r.output : `ERROR: ${r.error}`}`)
+          .join('\n\n')
+        const allOk = results.every((r) => r.ok)
+        yield { type: 'result', result: { ok: allOk, output: out, error: allOk ? '' : 'Algún subagente falló; revisa su salida.' } }
+        return
+      }
       case 'web_search': {
         const res = await websearch.search(settings || { tavily: {} }, String(args.query || ''))
         yield { type: 'result', result: { ok: true, output: res ? res.slice(0, MAX_OUTPUT) : 'Sin resultados' } }
@@ -517,7 +637,7 @@ async function* runAgentOpenAI(cfg, def, msgs, signal, workspace, settings, stat
     const body = {
       model: msgs._model,
       messages: msgs.messages,
-      tools: await buildTools(settings),
+      ...(msgs._noTools ? {} : { tools: await buildTools(settings) }),
       stream: true,
       ...(msgs._temperature != null ? { temperature: msgs._temperature } : {}),
       ...(isNewGen ? { max_completion_tokens: maxTokens } : { max_tokens: maxTokens })
@@ -569,6 +689,52 @@ async function* execTool(name, args, toolId, signal, workspace, settings, state)
   }
 }
 
+async function runSubagent(state, task, ctx, depth) {
+  const def = state?.providerDef
+  const cfg = state?.providerCfg
+  const model = state?.model
+  const workspace = state?.workspace
+  if (!def || !cfg || !model || !workspace) {
+    return { ok: false, output: '', error: 'Subagentes no disponibles con este proveedor' }
+  }
+  const system = `Eres un subagente experto (como los de Claude Code) que colabora con un agente principal. Recibes una sub-tarea y los archivos relevantes; analízalos y devuelve TU RESPUESTA SOLA, clara y accionable. No puedes ejecutar comandos ni editar archivos: tu salida la usará el agente principal. Responde en el idioma de la tarea, sé conciso y concreto (máx. 800 palabras).`
+  const msgs = {
+    _model: model,
+    _noTools: true,
+    messages: [
+      { role: 'system', content: system },
+      { role: 'user', content: ctx.length ? `Archivos de contexto:\n${ctx.join('\n\n')}\n\nSub-tarea:\n${task}` : `Sub-tarea:\n${task}` }
+    ]
+  }
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), 90000)
+  const subState = { lastTool: null, plan: false, proposals: [], delegateDepth: depth }
+  try {
+    let out = ''
+    if (def.id === 'anthropic') {
+      for await (const ev of runAgentAnthropic(cfg, msgs, ctrl.signal, workspace, null, subState)) {
+        if (ev.type === 'text') out += ev.text
+        if (ev.type === 'error') throw new Error(ev.message)
+      }
+    } else if (def.id === 'google') {
+      for await (const ev of runAgentGemini(cfg, msgs, ctrl.signal, workspace, null, subState)) {
+        if (ev.type === 'text') out += ev.text
+        if (ev.type === 'error') throw new Error(ev.message)
+      }
+    } else {
+      for await (const ev of runAgentOpenAI(cfg, def, msgs, ctrl.signal, workspace, null, subState)) {
+        if (ev.type === 'text') out += ev.text
+        if (ev.type === 'error') throw new Error(ev.message)
+      }
+    }
+    return { ok: true, output: out.trim() || '(sin respuesta)' }
+  } catch (e) {
+    return { ok: false, output: '', error: String(e.message || e).slice(0, 1200) }
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 async function* runAgentAnthropic(cfg, msgs, signal, workspace, settings, state) {
   const system = msgs.messages.filter((m) => m.role === 'system').map((m) => m.content).join('\n')
   const conv = msgs.messages.filter((m) => m.role !== 'system').map((m) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content }))
@@ -583,7 +749,7 @@ async function* runAgentAnthropic(cfg, msgs, signal, workspace, settings, state)
         ...(msgs._temperature != null ? { temperature: msgs._temperature } : {}),
         system: system || undefined,
         messages: conv,
-        tools: await anthropicTools(settings),
+        ...(msgs._noTools ? {} : { tools: await anthropicTools(settings) }),
         stream: true
       }),
       signal: AbortSignal.any([signal, AbortSignal.timeout(300000)])
@@ -685,7 +851,7 @@ async function* runAgentGemini(cfg, msgs, signal, workspace, settings, state) {
     const body = {
       contents,
       systemInstruction: system ? { parts: [{ text: system }] } : undefined,
-      tools: await geminiTools(settings),
+      ...(msgs._noTools ? {} : { tools: await geminiTools(settings) }),
       generationConfig: { maxOutputTokens: msgs._maxTokens || 8192, ...(msgs._temperature != null ? { temperature: msgs._temperature } : {}) }
     }
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(msgs._model)}:streamGenerateContent?alt=sse&key=${encodeURIComponent(cfg.apiKey)}`
@@ -770,7 +936,7 @@ Reglas del modo plan:
       { role: 'user', content: req.prompt }
     ]
   }
-  const state = { lastTool: null, plan: !!req.plan, proposals: [] }
+  const state = { lastTool: null, plan: !!req.plan, proposals: [], providerDef: def, providerCfg: cfg, model: req.model, workspace: req.workspace, settings, delegateDepth: 0 }
   if (def.id === 'anthropic') yield* runAgentAnthropic(cfg, msgs, signal, req.workspace, settings, state)
   else if (def.id === 'google') yield* runAgentGemini(cfg, msgs, signal, req.workspace, settings, state)
   else yield* runAgentOpenAI(cfg, def, msgs, signal, req.workspace, settings, state)

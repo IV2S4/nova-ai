@@ -1,9 +1,10 @@
-import React, { useEffect, useRef, useState } from 'react'
-import { Bot, FolderOpen, Folder, FileText, Send, Square, Loader2, Terminal, List, Pencil, Globe, CheckCircle2, XCircle, Settings, BadgeCheck, Sparkles, X, Check, Trash2, History, Code2, ExternalLink, RefreshCw, Play, Scissors, Minus, Plus, ChevronLeft, ChevronRight, Eye, EyeOff, Copy, Columns, GitBranch, MessageSquare, ArrowUp, ArrowDown, X as XIcon, Wrench, Search, FileDown } from 'lucide-react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
+import { Bot, FolderOpen, Folder, FileText, Send, Square, Loader2, Terminal, List, Pencil, Globe, CheckCircle2, XCircle, Settings, BadgeCheck, Sparkles, X, Check, Trash2, History, Code2, ExternalLink, RefreshCw, Play, Scissors, Minus, Plus, ChevronLeft, ChevronRight, Eye, EyeOff, Copy, Columns, GitBranch, MessageSquare, ArrowUp, ArrowDown, X as XIcon, Wrench, Search, FileDown, Users } from 'lucide-react'
 import Markdown from './Markdown.jsx'
 import { uid } from '../api.js'
 import { PROMPTS, PROMPT_CATEGORIES } from '../prompts.js'
 import i18n from '../i18n.js'
+import { estimateCost } from '../costs.js'
 
 function parseDiff(diff) {
   const hunks = []
@@ -20,6 +21,51 @@ function parseDiff(diff) {
   }
   if (currentHunk) hunks.push(currentHunk)
   return hunks
+}
+
+function unifiedDiff(oldStr, newStr) {
+  const a = (oldStr || '').split('\n')
+  const b = (newStr || '').split('\n')
+  const n = a.length
+  const m = b.length
+  if (n > 4000 || m > 4000) return ''
+  const dp = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0))
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1])
+    }
+  }
+  const ops = []
+  let i = 0
+  let j = 0
+  while (i < n && j < m) {
+    if (a[i] === b[j]) { ops.push({ t: ' ', x: a[i] }); i++; j++ }
+    else if (dp[i + 1][j] >= dp[i][j + 1]) { ops.push({ t: '-', x: a[i] }); i++ }
+    else { ops.push({ t: '+', x: b[j] }); j++ }
+  }
+  while (i < n) ops.push({ t: '-', x: a[i++] })
+  while (j < m) ops.push({ t: '+', x: b[j++] })
+  if (ops.every((o) => o.t === ' ')) return ''
+  const out = []
+  const oldIdx = (x) => ops.slice(0, x).filter((o) => o.t !== '+').length
+  const newIdx = (x) => ops.slice(0, x).filter((o) => o.t !== '-').length
+  let k = 0
+  while (k < ops.length) {
+    if (ops[k].t === ' ') { k++; continue }
+    const runStart = k
+    let k2 = k
+    while (k2 < ops.length && ops[k2].t !== ' ') k2++
+    const ctxStart = Math.max(0, runStart - 3)
+    const ctxEnd = Math.min(ops.length, k2 + 3)
+    const sA = oldIdx(ctxStart)
+    const sB = newIdx(ctxStart)
+    const cA = oldIdx(ctxEnd) - sA
+    const cB = newIdx(ctxEnd) - sB
+    out.push(`@@ -${sA + 1},${cA} +${sB + 1},${cB} @@`)
+    for (let x = ctxStart; x < ctxEnd; x++) out.push(ops[x].t + ops[x].x)
+    k = k2
+  }
+  return out.join('\n')
 }
 
 function DiffView({ diff, onHunkToggle, appliedHunks, readOnly }) {
@@ -141,14 +187,16 @@ const QUICK_ACTIONS = [
   'Añade una nueva funcionalidad y compila'
 ]
 
-const TOOL_ICONS = { run_command: Terminal, read_file: FileText, list_files: List, write_file: Pencil, edit_file: Scissors, web_search: Globe }
+const TOOL_ICONS = { run_command: Terminal, read_file: FileText, list_files: List, write_file: Pencil, edit_file: Scissors, web_search: Globe, search_codebase: Search, delegate_task: Users }
 const TOOL_NAMES = {
   run_command: 'Ejecutar comando',
   read_file: 'Leer archivo',
   list_files: 'Listar archivos',
   write_file: 'Editar archivo',
   edit_file: 'Edición quirúrgica',
-  web_search: 'Buscar en web'
+  web_search: 'Buscar en web',
+  search_codebase: i18n.t('agent.searchCode'),
+  delegate_task: i18n.t('agent.delegate')
 }
 
 function toolSummary(t) {
@@ -157,6 +205,8 @@ function toolSummary(t) {
   if (t.name === 'write_file' || t.name === 'edit_file' || t.name === 'read_file') return a.path || ''
   if (t.name === 'list_files') return a.path || '.'
   if (t.name === 'web_search') return a.query || ''
+  if (t.name === 'search_codebase') return a.query || ''
+  if (t.name === 'delegate_task') return `${(a.subtasks || []).length || 1} sub-tarea(s)`
   return ''
 }
 
@@ -217,11 +267,30 @@ export default function AgentView({ providers, settings, onOpenSettings }) {
   const [grepBusy, setGrepBusy] = useState(false)
   const [commitMsgGen, setCommitMsgGen] = useState(false)
   const [exportNotice, setExportNotice] = useState('')
+  const [autoFix, setAutoFix] = useState(false)
+  const [tokensChars, setTokensChars] = useState(0)
+  const [termOutput, setTermOutput] = useState([])
+  const [termInput, setTermInput] = useState('')
+  const [termBusy, setTermBusy] = useState(false)
+  const [edPath, setEdPath] = useState('')
+  const [edContent, setEdContent] = useState('')
+  const [edOriginal, setEdOriginal] = useState(null)
+  const [edNotice, setEdNotice] = useState('')
+  const [verifyBusy, setVerifyBusy] = useState(false)
+  const [verifyResult, setVerifyResult] = useState(null)
+  const [suggestion, setSuggestion] = useState('')
   const sessionRef = useRef(null)
   const scrollRef = useRef(null)
   const textareaRef = useRef(null)
   const metaRef = useRef(null)
   const contentRef = useRef({ text: '', tools: [], proposals: [] })
+  const autoFixRef = useRef(false)
+  const autoFixCountRef = useRef(0)
+  const sendRef = useRef(null)
+  const busyRef = useRef(false)
+  const tokensRef = useRef(0)
+  const suggestTimerRef = useRef(null)
+  const termOutRef = useRef(null)
 
   const current = providers.find((p) => p.id === providerId)
 
@@ -236,6 +305,38 @@ export default function AgentView({ providers, settings, onOpenSettings }) {
   useEffect(() => {
     if (workspace) window.api?.saveSettings({ agent: { workspace } })
   }, [workspace])
+
+  useEffect(() => { autoFixRef.current = autoFix }, [autoFix])
+  useEffect(() => { busyRef.current = busy }, [busy])
+
+  useEffect(() => {
+    const unsub = window.api?.onTerminalEvent((ev) => {
+      if (ev.id === 'agent-term') {
+        if (ev.type === 'chunk') {
+          setTermOutput((o) => [...o.slice(-1999), { type: 'out', text: ev.text }])
+        } else if (ev.type === 'error') {
+          setTermBusy(false)
+          setTermOutput((o) => [...o.slice(-1999), { type: 'err', text: ev.text }])
+        } else if (ev.type === 'exit') {
+          setTermBusy(false)
+          setTermOutput((o) => [...o.slice(-1999), { type: 'exit', text: i18n.t('agent.termExit', { code: ev.code ?? '?' }) }])
+        }
+      } else if (ev.id === 'agent-verify') {
+        if (ev.type === 'exit') {
+          setVerifyBusy(false)
+          setVerifyResult({ ok: ev.code === 0, text: ev.code === 0 ? i18n.t('agent.verifyOk') : i18n.t('agent.verifyFail', { code: ev.code }), code: ev.code })
+        } else if (ev.type === 'error') {
+          setVerifyBusy(false)
+          setVerifyResult({ ok: false, text: ev.text, code: null })
+        }
+      }
+    })
+    return () => unsub?.()
+  }, [])
+
+  useEffect(() => {
+    termOutRef.current?.scrollTo({ top: termOutRef.current.scrollHeight })
+  }, [termOutput])
 
   useEffect(() => {
     window.api?.getSkills().then(setSkillsList)
@@ -370,8 +471,10 @@ export default function AgentView({ providers, settings, onOpenSettings }) {
     else setGitError(r?.error || 'No se pudo generar el mensaje')
   }
 
+  const fixPrompt = (t) => `El comando falló con este error:\n${t.error}\n\nSalida:\n${(t.output || '').slice(0, 1500)}\n\nCorrige el problema: encuentra la causa raíz y arregla el código, luego verifica con el build.`
+
   const fixError = (t) => {
-    send(`El comando falló con este error:\n${t.error}\n\nSalida:\n${(t.output || '').slice(0, 1500)}\n\nCorrige el problema: encuentra la causa raíz y arregla el código, luego verifica con el build.`)
+    send(fixPrompt(t))
   }
 
   const applySlash = (cmd) => {
@@ -419,6 +522,8 @@ export default function AgentView({ providers, settings, onOpenSettings }) {
       } else if (ev.type === 'text') {
         contentRef.current.text += ev.text
         setText(contentRef.current.text)
+        tokensRef.current += ev.text.length
+        setTokensChars(tokensRef.current)
       } else if (ev.type === 'compact') {
         setThinking('')
         contentRef.current.text += `\n\n> **Contexto compactado automáticamente** (sesión anterior muy larga)\n`
@@ -457,6 +562,13 @@ export default function AgentView({ providers, settings, onOpenSettings }) {
           setPlanSteps(steps.length ? steps : [])
         }
         saveSession({ done: true, error: '' })
+        if (autoFixRef.current) {
+          const lastErr = contentRef.current.tools.filter((t) => t.status === 'error').slice(-1)[0]
+          if (lastErr && autoFixCountRef.current < 2) {
+            autoFixCountRef.current++
+            setTimeout(() => sendRef.current?.(fixPrompt(lastErr)), 400)
+          }
+        }
       } else if (ev.type === 'error') {
         setBusy(false)
         setThinking('')
@@ -515,6 +627,10 @@ export default function AgentView({ providers, settings, onOpenSettings }) {
       prompt = `${prompt}\n\nReferencias del proyecto:\n${ctx}`
     }
     setError('')
+    tokensRef.current = 0
+    setTokensChars(0)
+    if (!override) autoFixCountRef.current = 0
+    setSuggestion('')
     contentRef.current = { text: '', tools: [], proposals: [] }
     setText('')
     setTools([])
@@ -524,6 +640,7 @@ export default function AgentView({ providers, settings, onOpenSettings }) {
     setThinking('')
     setPlanSteps([])
     setCpId(null)
+    setVerifyResult(null)
     const id = 'agent:' + uid()
     sessionRef.current = id
     const ctx = loaded ? buildContext(loaded) : undefined
@@ -531,6 +648,8 @@ export default function AgentView({ providers, settings, onOpenSettings }) {
     setBusy(true)
     window.api.sendAgent({ id, provider: providerId, model, prompt, workspace, skills: enabledIds, context: ctx, plan: planMode })
   }
+
+  useEffect(() => { sendRef.current = send }, [send])
 
   const buildContext = (s) => {
     const parts = []
@@ -566,6 +685,9 @@ export default function AgentView({ providers, settings, onOpenSettings }) {
     if (s.workspace) setWorkspace(s.workspace)
     setLoaded(s)
     contentRef.current = { text: s.text || '', tools: s.tools || [], proposals: s.proposals || [] }
+    tokensRef.current = 0
+    setTokensChars(0)
+    setVerifyResult(null)
   }
 
   const deleteSession = async (id) => {
@@ -588,6 +710,90 @@ export default function AgentView({ providers, settings, onOpenSettings }) {
     setThinking('')
     setPlanSteps([])
     setCpId(null)
+    tokensRef.current = 0
+    setTokensChars(0)
+    setVerifyResult(null)
+  }
+
+  const runTermCmd = () => {
+    if (!workspace || !termInput.trim()) return
+    if (termBusy) {
+      window.api?.terminalStop('agent-term')
+      return
+    }
+    setTermBusy(true)
+    setTermOutput((o) => [...o.slice(-1999), { type: 'cmd', text: `$ ${termInput.trim()}` }])
+    window.api?.terminalRun('agent-term', workspace, termInput.trim())
+  }
+
+  const clearTerm = () => setTermOutput([])
+
+  const runVerify = async () => {
+    if (!workspace) return
+    setVerifyBusy(true)
+    setVerifyResult(null)
+    try {
+      const pkgRaw = await window.api?.readWorkspaceFile(workspace, 'package.json')
+      let cmd = null
+      if (pkgRaw) {
+        try {
+          const pkg = JSON.parse(pkgRaw)
+          if (pkg?.scripts?.build) cmd = 'npm run build'
+          else if (pkg?.scripts?.test) cmd = 'npm test'
+        } catch { /* package.json inválido */ }
+      }
+      if (!cmd) {
+        setVerifyResult({ ok: false, text: i18n.t('agent.verifyNoCmd'), code: null })
+        setVerifyBusy(false)
+        return
+      }
+      setVerifyResult({ ok: null, text: i18n.t('agent.verifyRunning'), code: null })
+      window.api?.terminalRun('agent-verify', workspace, cmd)
+    } catch (e) {
+      setVerifyResult({ ok: false, text: String(e.message || e), code: null })
+      setVerifyBusy(false)
+    }
+  }
+
+  const loadEdFile = async () => {
+    const p = edPath.trim()
+    if (!p || !workspace) return
+    setEdNotice('')
+    const text = await window.api?.readWorkspaceFile(workspace, p)
+    if (text == null) {
+      setEdNotice(i18n.t('agent.edLoadError', { error: 'archivo no encontrado' }))
+      return
+    }
+    setEdOriginal(text)
+    setEdContent(text)
+  }
+
+  const saveEdFile = async () => {
+    const r = await window.api?.writeWorkspaceFile(workspace, edPath.trim(), edContent)
+    if (r?.ok) {
+      setEdOriginal(edContent)
+      setEdNotice(i18n.t('agent.edSaved', { path: edPath.trim() }))
+      setTimeout(() => setEdNotice(''), 2500)
+    } else {
+      setEdNotice(r?.error || 'Error al guardar')
+    }
+  }
+
+  const requestSuggestion = (val) => {
+    clearTimeout(suggestTimerRef.current)
+    if (!val.trim() || busyRef.current || !current || (!current.hasKey && !current.local) || !workspace) {
+      setSuggestion('')
+      return
+    }
+    suggestTimerRef.current = setTimeout(async () => {
+      const r = await window.api?.completeCode({ provider: providerId, model, code: val })
+      if (r?.ok && r.text && !busyRef.current) {
+        const sug = r.text.trim()
+        setSuggestion(sug && !sug.includes('\n\n\n') ? sug.slice(0, 240) : '')
+      } else {
+        setSuggestion('')
+      }
+    }, 900)
   }
 
   const exportSession = async () => {
@@ -628,6 +834,7 @@ export default function AgentView({ providers, settings, onOpenSettings }) {
     const next = contentRef.current.proposals.map((x) => (x.id === p.id ? { ...x, applied: true } : x))
     contentRef.current.proposals = next
     setProposals(next)
+    runVerify()
   }
 
   const applyAll = async () => {
@@ -641,6 +848,7 @@ export default function AgentView({ providers, settings, onOpenSettings }) {
     const next = contentRef.current.proposals.map((x) => (r.applied.includes(x.id) ? { ...x, applied: true } : x))
     contentRef.current.proposals = next
     setProposals(next)
+    runVerify()
   }
 
   const restoreCheckpoint = async () => {
@@ -676,6 +884,8 @@ export default function AgentView({ providers, settings, onOpenSettings }) {
           <button className={`agent-tab ${sideTab === 'sessions' ? 'active' : ''}`} onClick={() => setSideTab('sessions')}><History size={13} /> {i18n.t('agent.tabsSessions')}</button>
           <button className={`agent-tab ${sideTab === 'files' ? 'active' : ''}`} onClick={() => setSideTab('files')}><Folder size={13} /> {i18n.t('agent.tabsFiles')}</button>
           <button className={`agent-tab ${sideTab === 'git' ? 'active' : ''}`} onClick={() => setSideTab('git')}><GitBranch size={13} /> {i18n.t('agent.tabsGit')}</button>
+          <button className={`agent-tab ${sideTab === 'term' ? 'active' : ''}`} onClick={() => setSideTab('term')}><Terminal size={13} /> {i18n.t('agent.tabsTerm')}</button>
+          <button className={`agent-tab ${sideTab === 'editor' ? 'active' : ''}`} onClick={() => setSideTab('editor')}><Code2 size={13} /> {i18n.t('agent.tabsEditor')}</button>
         </div>
         <div className="agent-side-body">
           {sideTab === 'sessions' && (
@@ -879,6 +1089,73 @@ export default function AgentView({ providers, settings, onOpenSettings }) {
               )}
             </>
           )}
+          {sideTab === 'term' && (
+            <>
+              <div className="agent-side-head">
+                <span className="term-title"><Terminal size={12} /> {i18n.t('agent.termTitle')}</span>
+                <button className="icon-btn" onClick={clearTerm} title={i18n.t('agent.termClear')}><Trash2 size={13} /></button>
+              </div>
+              <div className="term-body" ref={termOutRef}>
+                {termOutput.length === 0 && (
+                  <div className="empty-hint">{i18n.t('agent.termEmpty')}</div>
+                )}
+                {termOutput.map((l, i) => (
+                  <pre key={i} className={`term-line ${l.type}`}>{l.text}</pre>
+                ))}
+              </div>
+              <div className="term-input-row">
+                <input
+                  className="term-input"
+                  placeholder={i18n.t('agent.termPlaceholder')}
+                  value={termInput}
+                  onChange={(e) => setTermInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') runTermCmd() }}
+                />
+                <button className="icon-btn" onClick={runTermCmd} title={termBusy ? i18n.t('agent.termStop') : i18n.t('agent.termRun')}>
+                  {termBusy ? <Square size={13} /> : <Play size={13} />}
+                </button>
+              </div>
+            </>
+          )}
+          {sideTab === 'editor' && (
+            <>
+              <div className="agent-side-head">
+                <span className="term-title"><Code2 size={12} /> {i18n.t('agent.edTitle')}</span>
+              </div>
+              <div className="editor-bar">
+                <input
+                  className="grep-input"
+                  placeholder={i18n.t('agent.edPathPlaceholder')}
+                  value={edPath}
+                  onChange={(e) => setEdPath(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') loadEdFile() }}
+                />
+                <button className="icon-btn" onClick={loadEdFile} title={i18n.t('agent.edOpen')}><FileText size={13} /></button>
+                {edOriginal !== null && (
+                  <button className="icon-btn ok" onClick={saveEdFile} title={i18n.t('agent.edSave')} disabled={edOriginal === edContent}><Check size={13} /></button>
+                )}
+              </div>
+              {edNotice && <div className={`tool-error ${edNotice.includes(i18n.t('agent.edSaved', { path: '' })) ? 'ed-ok' : ''}`}>{edNotice}</div>}
+              {edOriginal === null ? (
+                <div className="empty-hint editor-empty">{i18n.t('agent.edEmpty')}</div>
+              ) : (
+                <>
+                  <textarea
+                    className="editor-area"
+                    value={edContent}
+                    onChange={(e) => setEdContent(e.target.value)}
+                    spellCheck={false}
+                  />
+                  {edOriginal !== edContent && (
+                    <div className="editor-diff">
+                      <div className="editor-diff-head"><strong>{i18n.t('agent.edDiffTitle')}</strong></div>
+                      <DiffView diff={unifiedDiff(edOriginal, edContent)} readOnly />
+                    </div>
+                  )}
+                </>
+              )}
+            </>
+          )}
         </div>
       </div>
 
@@ -907,6 +1184,14 @@ export default function AgentView({ providers, settings, onOpenSettings }) {
             </select>
             {busy && (
               <button className="btn danger" onClick={stop}><Square size={13} /> {i18n.t('agent.stop')}</button>
+            )}
+            <button className={`btn ${autoFix ? 'primary' : ''}`} onClick={() => setAutoFix(!autoFix)} title={i18n.t('agent.autoFixTitle')}>
+              <Wrench size={13} /> {i18n.t('agent.autoFix')}
+            </button>
+            {tokensChars > 0 && (
+              <span className="tokens-badge" title="Tokens de salida estimados y coste aproximado">
+                {i18n.t('agent.tokens', { tokens: (tokensChars / 4 / 1000).toFixed(1), cost: (() => { const c = estimateCost(tokensChars, model); return c < 0.01 ? c.toFixed(4) : c.toFixed(2) })() })}
+              </span>
             )}
             <button className="icon-btn" onClick={exportSession} title={i18n.t('agent.exportSession')}><FileDown size={16} /></button>
             <button className="icon-btn" onClick={onOpenSettings} title={i18n.t('agent.settings')}><Settings size={16} /></button>
@@ -941,7 +1226,11 @@ export default function AgentView({ providers, settings, onOpenSettings }) {
             <div className="welcome">
               <div className="welcome-logo"><History size={30} /></div>
               <h2>Sesión cargada</h2>
-              <p className="hint">Estás viendo la sesión «{loaded.title}». Escribe un mensaje para continuarla: el agente retomará el contexto del trabajo anterior.</p>
+              <p className="hint">{i18n.t('agent.resumeHint')}: «{loaded.title}».</p>
+              <div className="agent-welcome-actions">
+                <button className="btn primary" onClick={() => send(i18n.t('agent.resumePrompt', { title: loaded.title }))}><Play size={14} /> {i18n.t('agent.resume')}</button>
+                <button className="btn" onClick={newSession}><X size={13} /> Nueva sesión</button>
+              </div>
             </div>
           )}
 
@@ -1005,11 +1294,30 @@ export default function AgentView({ providers, settings, onOpenSettings }) {
                 <div className="proposals-actions">
                   <button className="btn small" onClick={applyAll} disabled={busy || proposals.every((p) => p.applied)}><Check size={12} /> Aplicar todas</button>
                   <button className="btn small" onClick={undoAll} disabled={busy || !proposals.some((p) => p.applied)}><RefreshCw size={12} /> Deshacer todas</button>
+                  <button className="btn small" onClick={runVerify} disabled={busy || verifyBusy} title={i18n.t('agent.verifyTitle')}>
+                    {verifyBusy ? <Loader2 size={12} className="spin" /> : <CheckCircle2 size={12} />} {i18n.t('agent.verify')}
+                  </button>
                 </div>
               </div>
               {proposals.map((p) => (
                 <ProposalCard key={p.id} p={p} busy={busy} onApplySelected={(sel) => applyOne(sel)} onApplyAll={(orig) => applyOne(orig)} />
               ))}
+            </div>
+          )}
+
+          {verifyResult && (
+            <div className={`verify-banner ${verifyResult.ok === null ? 'run' : verifyResult.ok ? 'ok' : 'fail'}`}>
+              <span>
+                {verifyResult.ok === null && <Loader2 size={13} className="spin" />}
+                {verifyResult.ok === true && <CheckCircle2 size={13} />}
+                {verifyResult.ok === false && <XCircle size={13} />}
+                {verifyResult.text}
+              </span>
+              {verifyResult.ok === false && (
+                <button className="btn small danger" onClick={() => fixError({ error: verifyResult.text, output: '' })} disabled={busy} title="Envía el fallo de verificación al agente para que lo corrija">
+                  <Wrench size={12} /> Corregir
+                </button>
+              )}
             </div>
           )}
 
@@ -1078,21 +1386,39 @@ export default function AgentView({ providers, settings, onOpenSettings }) {
               <input type="checkbox" checked={planMode} onChange={(e) => setPlanMode(e.target.checked)} />
               <Scissors size={13} /> {i18n.t('agent.plan')}
             </label>
-            <textarea
-              ref={textareaRef}
-              value={input}
-              onChange={(e) => {
-                setInput(e.target.value)
-                setSlashOpen(e.target.value.startsWith('/') && !e.target.value.includes(' '))
-              }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); setSlashOpen(false); send() }
-                else if (e.key === 'Escape') setSlashOpen(false)
-              }}
-              placeholder={loaded ? 'Continúa la sesión: escribe tu siguiente instrucción…' : 'Pídele al agente: ejecuta el build, corrige los errores, crea una funcionalidad…'}
-              rows={2}
-              disabled={busy}
-            />
+            <div className="input-wrap">
+              {suggestion && !busy && (
+                <div className="ghost-text" data-ghost={suggestion} title={i18n.t('agent.suggestionHint')}>{input}</div>
+              )}
+              <textarea
+                ref={textareaRef}
+                value={input}
+                onChange={(e) => {
+                  setInput(e.target.value)
+                  setSuggestion('')
+                  setSlashOpen(e.target.value.startsWith('/') && !e.target.value.includes(' '))
+                  requestSuggestion(e.target.value)
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Tab' && suggestion) {
+                    e.preventDefault()
+                    setInput(input + suggestion)
+                    setSuggestion('')
+                  } else if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault()
+                    setSlashOpen(false)
+                    setSuggestion('')
+                    send()
+                  } else if (e.key === 'Escape') {
+                    setSlashOpen(false)
+                    setSuggestion('')
+                  }
+                }}
+                placeholder={loaded ? 'Continúa la sesión: escribe tu siguiente instrucción…' : 'Pídele al agente: ejecuta el build, corrige los errores, crea una funcionalidad…'}
+                rows={2}
+                disabled={busy}
+              />
+            </div>
             {busy ? (
               <button className="btn danger" onClick={stop} title={i18n.t('agent.stop')}><Square size={16} /></button>
             ) : (

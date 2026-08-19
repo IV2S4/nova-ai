@@ -1,5 +1,16 @@
 module.exports = {
   entries: {
+    '2.2.0': [
+      '🤖 AGENTE AL NIVEL DE CLAUDE CODE / CURSOR: el agente ya puede lanzar SUBAGENTES EN PARALELO (hasta 4) para analizar varios archivos o tareas a la vez, y busca en TODO el código del proyecto con la nueva herramienta search_codebase (como @codebase): localiza funciones, variables o conceptos al instante sin leer archivo por archivo',
+      '🖥️ TERMINAL INTEGRADA: pestaña Terminal en el panel del agente para ejecutar comandos en tu proyecto con salida en tiempo real (npm run build, git status, tests…)',
+      '📝 EDITOR DE ARCHIVOS con diff en línea: pestaña Editor para abrir cualquier archivo del proyecto, editarlo y guardarlo — verás exactamente qué cambiaste antes de guardar',
+      '⏱️ VERIFICACIÓN POST-CAMBIO: al aplicar propuestas (modo plan) el agente ejecuta automáticamente el build o los tests del proyecto y te dice si todo sigue funcionando (botón "Verificar cambios" manual también)',
+      '🔧 FIX AUTOMÁTICO: activa "Fix auto" y cuando una herramienta falle el agente lo corregirá solo (hasta 2 intentos) sin que tengas que pedirlo',
+      '✅ /RESUME COMPLETO: al cargar una sesión anterior ahora hay botón "Continuar tarea" que retoma exactamente donde se quedó',
+      '💵 CONTADOR DE TOKENS Y COSTE: el agente muestra en tiempo real los tokens de salida estimados y el coste aproximado en $ por sesión',
+      '⌨️ AUTOCOMPLETADO TAB: mientras escribes una instrucción el agente sugiere la continuación (estilo Cursor) — pulsa Tab para aceptarla',
+      'Corrección: el visor de diffs (DiffView) usaba useMemo sin importarlo (fallo latente que se corregía solo en algunas compilaciones)'
+    ],
     '2.1.0': [
       '🌍 IDIOMA: Nova AI ahora habla español e inglés. Cambia el idioma en Ajustes → General → Idioma de la interfaz (toda la interfaz se traduce al instante)',
       '⬇️ ACTUALIZACIONES AUTOMÁTICAS: "Buscar actualizaciones" ahora descarga e instala la nueva versión desde la propia app (solo en la versión instalada). También avisa al arrancar si hay una versión nueva y cuando la descarga termina',

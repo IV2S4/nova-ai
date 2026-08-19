@@ -686,4 +686,69 @@ async function generateTitle(settings, req) {
   } catch { return null }
 }
 
-module.exports = { getProviderList, testProvider, streamChat, clearModelCache, getConfig, PROVIDER_DEFS, generateTitle }
+async function completeCode(settings, req) {
+  const def = PROVIDER_DEFS.find((p) => p.id === req?.provider)
+  if (!def) throw new Error('Proveedor desconocido')
+  const cfg = getConfig(settings)[req.provider]
+  if (!cfg.apiKey && !def.local) throw new Error(`Falta la API key de ${def.name}`)
+  const code = String(req.code || '').slice(-6000)
+  if (!code.trim()) throw new Error('Texto vacío')
+  const sys = 'Eres un autocompletado de código (estilo Cursor/Tab). Completa el texto del usuario con la continuación más natural y útil. Devuelve SOLO la continuación (código/texto), sin explicaciones, sin markdown, sin comillas ni prefijos.'
+  const temperature = 0.2
+  const maxTokens = 80
+
+  if (req.provider === 'anthropic') {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'x-api-key': cfg.apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+      body: JSON.stringify({ model: req.model, max_tokens: maxTokens, temperature, system: sys, messages: [{ role: 'user', content: code }] }),
+      signal: AbortSignal.timeout(25000)
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data?.error?.message || `Error HTTP ${res.status}`)
+    return (data?.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('')
+  }
+
+  if (req.provider === 'google') {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(req.model)}:generateContent?key=${encodeURIComponent(cfg.apiKey)}`
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: sys }] },
+        contents: [{ role: 'user', parts: [{ text: code }] }],
+        generationConfig: { maxOutputTokens: maxTokens, temperature }
+      }),
+      signal: AbortSignal.timeout(25000)
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data?.error?.message || `Error HTTP ${res.status}`)
+    return (data?.candidates?.[0]?.content?.parts || []).map((p) => p.text || '').join('')
+  }
+
+  if (req.provider === 'ollama') {
+    const base = (cfg.base || 'http://127.0.0.1:11434').replace(/\/+$/, '')
+    const res = await fetch(`${base}/api/chat`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: req.model, stream: false, options: { temperature, num_predict: maxTokens }, messages: [{ role: 'system', content: sys }, { role: 'user', content: code }] }),
+      signal: AbortSignal.timeout(25000)
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data?.error || `Error HTTP ${res.status}`)
+    return data?.message?.content || ''
+  }
+
+  const base = cfg.base || def.base || 'https://api.openai.com/v1'
+  const res = await fetch(`${base}/chat/completions`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...(cfg.apiKey ? { Authorization: `Bearer ${cfg.apiKey}` } : {}) },
+    body: JSON.stringify({ model: req.model, messages: [{ role: 'system', content: sys }, { role: 'user', content: code }], max_tokens: maxTokens, temperature }),
+    signal: AbortSignal.timeout(25000)
+  })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data?.error?.message || `Error HTTP ${res.status}`)
+  return data?.choices?.[0]?.message?.content || ''
+}
+
+module.exports = { getProviderList, testProvider, streamChat, clearModelCache, getConfig, PROVIDER_DEFS, generateTitle, completeCode }

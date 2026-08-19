@@ -74,6 +74,15 @@ contextBridge.exposeInMainWorld('api', {
   restoreCheckpoint: (id) => ipcRenderer.invoke('agent:restoreCheckpoint', { id }),
   selfWorkspace: () => ipcRenderer.invoke('agent:selfWorkspace'),
   openPath: (workspace, rel, target) => ipcRenderer.invoke('shell:open', { workspace, rel, target }),
+  writeWorkspaceFile: (workspace, rel, content) => ipcRenderer.invoke('workspace:writeFile', { workspace, rel, content }),
+  terminalRun: (id, cwd, command) => ipcRenderer.invoke('terminal:run', { id, cwd, command }),
+  terminalStop: (id) => ipcRenderer.invoke('terminal:stop', id),
+  onTerminalEvent: (cb) => {
+    const listener = (_e, ev) => cb(ev)
+    ipcRenderer.on('terminal:event', listener)
+    return () => ipcRenderer.removeListener('terminal:event', listener)
+  },
+  completeCode: (req) => ipcRenderer.invoke('complete:code', req),
   getMemory: () => ipcRenderer.invoke('memory:list'),
   addMemory: (text, category) => ipcRenderer.invoke('memory:add', text, category),
   deleteMemory: (id) => ipcRenderer.invoke('memory:delete', id),

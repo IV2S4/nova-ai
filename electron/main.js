@@ -4,7 +4,7 @@ const fs = require('fs')
 const { spawn } = require('child_process')
 const settingsStore = require('./settings')
 const historyStore = require('./store')
-const { getProviderList, testProvider, streamChat, clearModelCache } = require('./providers')
+const { getProviderList, testProvider, streamChat, clearModelCache, completeCode } = require('./providers')
 const websearch = require('./websearch')
 const fileExtract = require('./files')
 const agent = require('./agent')
@@ -14,6 +14,7 @@ const projects = require('./projects')
 const changelog = require('./changelog')
 const updater = require('./updater')
 const mcp = require('./mcp')
+const terminal = require('./terminal')
 const { autoUpdater } = require('electron-updater')
 
 const activeRequests = new Map()
@@ -1062,6 +1063,42 @@ ipcMain.handle('workspace:writeRules', async (_e, { workspace, rules }) => {
     return { ok: true }
   } catch (e) {
     return { ok: false, error: e.message }
+  }
+})
+
+ipcMain.handle('workspace:writeFile', (_e, { workspace, rel, content }) => {
+  try {
+    if (!workspace || !rel) return { ok: false, error: 'Faltan parámetros' }
+    const target = agent.safeResolve(workspace, rel)
+    fs.mkdirSync(path.dirname(target), { recursive: true })
+    fs.writeFileSync(target, String(content ?? ''), 'utf8')
+    return { ok: true, path: rel }
+  } catch (err) {
+    return { ok: false, error: String(err.message || err).slice(0, 1200) }
+  }
+})
+
+ipcMain.handle('terminal:run', (e, { id, cwd, command }) => {
+  if (!id || !command) return { ok: false, error: 'Faltan parámetros' }
+  if (!cwd || !fs.existsSync(cwd)) return { ok: false, error: 'La carpeta no existe' }
+  const send = (ev) => {
+    if (!e.sender.isDestroyed()) e.sender.send('terminal:event', { id, ...ev })
+  }
+  const started = terminal.runTerminal(id, cwd, command, send)
+  return started ? { ok: true } : { ok: false, error: 'No se pudo iniciar el comando' }
+})
+
+ipcMain.handle('terminal:stop', (_e, id) => ({ ok: terminal.stopTerminal(id) }))
+
+ipcMain.handle('terminal:stopAll', () => ({ ok: terminal.stopAll() }))
+
+ipcMain.handle('complete:code', async (_e, req) => {
+  const settings = await settingsStore.getSettings(app)
+  try {
+    const text = await completeCode(settings, req)
+    return { ok: true, text }
+  } catch (err) {
+    return { ok: false, error: String(err.message || err).slice(0, 400) }
   }
 })
 

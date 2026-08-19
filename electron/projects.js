@@ -127,4 +127,4 @@ function deleteProject(base, id) {
   return true
 }
 
-module.exports = { listProjects, addFiles, removeFile, search, deleteProject, chunkText }
+module.exports = { listProjects, addFiles, removeFile, search, deleteProject, chunkText, scoreChunk }
