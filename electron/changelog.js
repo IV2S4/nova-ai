@@ -1,5 +1,10 @@
 module.exports = {
   entries: {
+    '2.3.2': [
+      '⚡ FALLBACK AUTOMÁTICO: si tu proveedor está saturado o sin cuota, la app cambia sola a otro proveedor (p. ej. Gemini → OpenRouter) y continúa tu petición sin que pulses nada. Verás un aviso en el chat de qué modelo respondió',
+      '🧠 MEJOR MEMORIA: al continuar una sesión, el agente ahora conoce los archivos que creó/modificó antes, sus rutas y sus resultados reales — edita tu página con más precisión sin volver a adivinar',
+      '🔧 Los errores de red (ECONNREFUSED, etc.) se detectan mejor para darte el aviso exacto'
+    ],
     '2.3.1': [
       '🔧 ARREGLADO (importante): el agente fallaba con Gemini 3.x con el error "missing thought_signature". Ahora captura y devuelve la firma de pensamiento que exige la API: las herramientas vuelven a funcionar con gemini-3.7-flash / 3.6-flash',
       '🔧 EL AGENTE YA SABE EDITAR LA PÁGINA: regla de oro nueva — antes de edit_file SIEMPRE lee el archivo con read_file y copia los textos exactos. Nunca inventa contenido ni nombres de archivo (si duda, usa list_files)',

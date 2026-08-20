@@ -1,7 +1,7 @@
 {
   "name": "aether-ai",
   "productName": "Aether AI",
-  "version": "2.3.1",
+  "version": "2.3.2",
   "description": "Aether AI - Tu asistente de IA todo-en-uno: Claude, GPT, Gemini, Ollama, OpenRouter y mas",
   "main": "electron/main.js",
   "license": "MIT",

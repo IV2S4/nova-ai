@@ -168,6 +168,21 @@ function saturatedSuggestion(providerId) {
   return null
 }
 
+const PROVIDER_LABELS = { google: 'Gemini', openrouter: 'OpenRouter', groq: 'Groq', anthropic: 'Anthropic', openai: 'OpenAI', deepseek: 'DeepSeek', xai: 'xAI', mistral: 'Mistral', lmstudio: 'LM Studio', ollama: 'Ollama' }
+
+const FALLBACKS = {
+  google: { provider: 'openrouter', model: 'meta-llama/llama-3.3-70b-instruct', label: 'OpenRouter (meta-llama/llama-3.3-70b-instruct)' },
+  openrouter: { provider: 'google', model: 'gemini-3.6-flash', label: 'Gemini (gemini-3.6-flash)' },
+  groq: { provider: 'google', model: 'gemini-3.6-flash', label: 'Gemini (gemini-3.6-flash)' },
+  anthropic: { provider: 'openrouter', model: 'meta-llama/llama-3.3-70b-instruct', label: 'OpenRouter (meta-llama/llama-3.3-70b-instruct)' },
+  openai: { provider: 'openrouter', model: 'meta-llama/llama-3.3-70b-instruct', label: 'OpenRouter (meta-llama/llama-3.3-70b-instruct)' },
+  deepseek: { provider: 'openrouter', model: 'meta-llama/llama-3.3-70b-instruct', label: 'OpenRouter (meta-llama/llama-3.3-70b-instruct)' },
+  xai: { provider: 'openrouter', model: 'meta-llama/llama-3.3-70b-instruct', label: 'OpenRouter (meta-llama/llama-3.3-70b-instruct)' },
+  mistral: { provider: 'openrouter', model: 'meta-llama/llama-3.3-70b-instruct', label: 'OpenRouter (meta-llama/llama-3.3-70b-instruct)' }
+}
+
+const FALLBACKABLE = /high demand|overloaded|too busy|try again later|temporarily unavailable|servers are busy|quota exceeded|free_tier|exceeded your current quota|resource exhausted|429|503|rate.limit/i
+
 async function* withRetry(factory, attempts = 3, baseDelay = 3500) {
   let emitted = false
   for (let a = 1; a <= attempts; a++) {
@@ -315,22 +330,45 @@ ipcMain.handle('agent:send', async (e, req) => {
   const ctrl = new AbortController()
   activeRequests.set(req.id, ctrl)
   ;(async () => {
+    const send = (ev) => {
+      if (!e.sender.isDestroyed()) e.sender.send('agent:event', { id: req.id, ...ev })
+    }
+    const runWith = (provider, model) => withRetry(() => agent.runAgent(settings, { ...req, provider, model }, ctrl.signal))
     try {
-      for await (const ev of withRetry(() => agent.runAgent(settings, req, ctrl.signal))) {
+      for await (const ev of runWith(req.provider, req.model)) {
         if (e.sender.isDestroyed()) { ctrl.abort(); break }
-        e.sender.send('agent:event', { id: req.id, ...ev })
+        send(ev)
       }
     } catch (err) {
       if (!ctrl.signal.aborted && !e.sender.isDestroyed()) {
-        const raw = err?.message || 'Error desconocido'
-        const cause = err?.cause?.code || err?.cause?.message
-        const message = friendlyError(cause && raw === 'fetch failed' ? `${raw} (${cause})` : raw, req.provider)
-        e.sender.send('agent:event', {
-          id: req.id,
-          type: 'error',
-          message,
-          suggestion: RETRYABLE.test(raw) ? saturatedSuggestion(req.provider) : null
-        })
+        const raw = `${err?.message || 'Error desconocido'} ${err?.cause?.code || err?.cause?.message || ''} ${err?.code ?? ''}`.trim()
+        const fb = FALLBACKABLE.test(raw) ? FALLBACKS[req.provider] : null
+        if (fb && settings.providers?.[fb.provider]?.apiKey) {
+          const name = PROVIDER_LABELS[req.provider] || req.provider
+          send({ type: 'notice', message: `${name} está saturado ahora mismo. Continuando automáticamente con ${fb.label}.` })
+          send({ type: 'switched', provider: fb.provider, model: fb.model })
+          try {
+            for await (const ev of runWith(fb.provider, fb.model)) {
+              if (e.sender.isDestroyed()) { ctrl.abort(); break }
+              send(ev)
+            }
+          } catch (err2) {
+            if (!ctrl.signal.aborted && !e.sender.isDestroyed()) {
+              const raw2 = `${err2?.message || 'Error desconocido'} ${err2?.cause?.code || err2?.cause?.message || ''} ${err2?.code ?? ''}`.trim()
+              send({
+                type: 'error',
+                message: `${name} está saturado y el plan B (${fb.label}) tampoco respondió. ${friendlyError(raw2, fb.provider)}`,
+                suggestion: null
+              })
+            }
+          }
+        } else {
+          send({
+            type: 'error',
+            message: friendlyError(raw, req.provider),
+            suggestion: RETRYABLE.test(raw) ? saturatedSuggestion(req.provider) : null
+          })
+        }
       }
     } finally {
       activeRequests.delete(req.id)

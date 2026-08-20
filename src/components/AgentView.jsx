@@ -554,6 +554,12 @@ export default function AgentView({ providers, settings, onOpenSettings }) {
         setThinking('')
         contentRef.current.text += `\n\n> **Contexto compactado automáticamente** (sesión anterior muy larga)\n`
         setText(contentRef.current.text)
+      } else if (ev.type === 'notice') {
+        contentRef.current.text += `\n\n> ${ev.message}\n`
+        setText(contentRef.current.text)
+      } else if (ev.type === 'switched') {
+        setProviderId(ev.provider)
+        setModel(ev.model)
       } else if (ev.type === 'tool') {
         const card = { toolId: ev.id, name: ev.name, args: ev.args, status: 'running', output: '', error: '' }
         contentRef.current.tools = [...contentRef.current.tools, card]
@@ -690,10 +696,20 @@ export default function AgentView({ providers, settings, onOpenSettings }) {
 
   const buildContext = (s) => {
     const parts = []
+    if (s.prompt) parts.push(`Petición anterior del usuario: ${s.prompt.slice(0, 600)}`)
     if (s.text) parts.push(`Respuesta final anterior: ${s.text.slice(0, 1500)}`)
     const used = (s.tools || []).filter((t) => t.status === 'done' || t.status === 'error')
-    if (used.length) parts.push(`Herramientas usadas antes: ${used.map((t) => `${t.name}(${t.status === 'done' ? 'ok' : 'error'})`).join(', ')}`)
-    return parts.join('\n') || 'Sesión anterior sin resultados.'
+    if (used.length) {
+      const lines = used.slice(-6).map((t) => {
+        const a = t.args || {}
+        const ref = a.path || a.command || a.query || ''
+        const out = (t.output || '').replace(/\s+/g, ' ').trim().slice(0, 900)
+        const err = t.error ? ': ' + t.error.replace(/\s+/g, ' ').trim().slice(0, 300) : ''
+        return `- ${t.name}${ref ? ' (' + ref + ')' : ''} → ${t.status === 'done' ? 'OK' : 'ERROR' + err}${out ? '\n  → ' + out : ''}`
+      })
+      parts.push(`Herramientas usadas antes y sus resultados reales (cópialos de aquí, no los inventes):\n${lines.join('\n')}`)
+    }
+    return parts.join('\n\n') || 'Sesión anterior sin resultados.'
   }
 
   const stop = () => {
