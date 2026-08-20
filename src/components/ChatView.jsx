@@ -656,7 +656,7 @@ function Artifact({ art, fileName }) {
     const lines = []
     for (const m of convRef.current.messages) {
       if (m.role === 'user') lines.push('## 👤 Tú', '', m.text || '', '')
-      else lines.push('## 🤖 Nova AI', '', m.text || '', '')
+      else lines.push('## 🤖 Aether AI', '', m.text || '', '')
     }
     return lines.join('\n')
   }
@@ -669,7 +669,7 @@ function Artifact({ art, fileName }) {
   }
 
   const exportConvo = async () => {
-    const res = await window.api.exportText(`Nova AI - ${convRef.current.title || 'Conversación'}.md`, convoMarkdown())
+    const res = await window.api.exportText(`Aether AI - ${convRef.current.title || 'Conversación'}.md`, convoMarkdown())
     if (!res?.ok && res?.error) setAttachError(res.error)
   }
 
@@ -743,10 +743,10 @@ const exportDocx = async () => {
   const c = convRef.current
   const title = c.title || 'Conversación'
   const paras = [`<w:p><w:pPr><w:pStyle w:val="Title"/></w:pPr><w:r><w:t>${xmlEsc(title)}</w:t></w:r></w:p>`]
-  paras.push(`<w:p><w:r><w:rPr><w:i/><w:color w:val="888888"/></w:rPr><w:t>${xmlEsc(`Exportado desde Nova AI · ${new Date().toLocaleString('es-ES')}`)}</w:t></w:r></w:p>`)
+  paras.push(`<w:p><w:r><w:rPr><w:i/><w:color w:val="888888"/></w:rPr><w:t>${xmlEsc(`Exportado desde Aether AI · ${new Date().toLocaleString('es-ES')}`)}</w:t></w:r></w:p>`)
   for (const m of c.messages) {
     if (m.role !== 'user' && m.role !== 'assistant') continue
-    const name = m.role === 'user' ? 'Tú' : 'Nova AI'
+    const name = m.role === 'user' ? 'Tú' : 'Aether AI'
     const text = (m.text || '')
       .split('\n')
       .map((l) => `<w:p><w:r><w:rPr><w:b/></w:rPr><w:t>${xmlEsc(name + ':')}</w:t></w:r><w:r><w:t xml:space="preserve"> ${xmlEsc(l)}</w:t></w:r></w:p>`)
@@ -780,7 +780,7 @@ ${paras.join('\n')}
   const buf = new Uint8Array(await blob.arrayBuffer())
   let bin = ''
   for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000))
-  const res = await window.api.exportFile(`Nova AI - ${title}.docx`, [{ name: 'Word', extensions: ['docx'] }], btoa(bin))
+  const res = await window.api.exportFile(`Aether AI - ${title}.docx`, [{ name: 'Word', extensions: ['docx'] }], btoa(bin))
   if (!res?.ok && res?.error) setAttachError(res.error)
 }
 
@@ -817,7 +817,7 @@ ${paras.join('\n')}
 
   const exportPdf = async () => {
     const title = convRef.current.title || 'Conversación'
-    const res = await window.api.exportPdf(`Nova AI - ${title}.pdf`, exportHtmlString(title))
+    const res = await window.api.exportPdf(`Aether AI - ${title}.pdf`, exportHtmlString(title))
     if (!res?.ok && res?.error) setAttachError(res.error)
   }
 
@@ -827,7 +827,7 @@ ${paras.join('\n')}
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${escapeHtml(title)} · Nova AI</title>
+<title>${escapeHtml(title)} · Aether AI</title>
 <style>
   body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0b0e14; color: #e6e9f0; max-width: 860px; margin: 0 auto; padding: 32px 20px 64px; line-height: 1.65; }
   h1 { background: linear-gradient(135deg, #7c6cff, #22d3ee); -webkit-background-clip: text; background-clip: text; color: transparent; }
@@ -843,7 +843,7 @@ ${paras.join('\n')}
 </head>
 <body>
 <h1>${escapeHtml(title)}</h1>
-<div class="meta">Exportado desde Nova AI · ${new Date().toLocaleString('es-ES')}</div>
+<div class="meta">Exportado desde Aether AI · ${new Date().toLocaleString('es-ES')}</div>
 ${mdToHtml(convoMessagesMd())}
 </body>
 </html>`
@@ -853,7 +853,7 @@ ${mdToHtml(convoMessagesMd())}
   const exportHtml = async () => {
     const title = convRef.current.title || 'Conversación'
     const html = exportHtmlString(title)
-    const res = await window.api.exportText(`Nova AI - ${title}.html`, html)
+    const res = await window.api.exportText(`Aether AI - ${title}.html`, html)
     if (!res?.ok && res?.error) setAttachError(res.error)
   }
 

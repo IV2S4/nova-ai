@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
-import { Plus, Settings, GitCompareArrows, Bot, Trash2, Search, Sparkles, Pin, PictureInPicture2, Folder, FolderPlus, X } from 'lucide-react'
+import { Plus, Settings, GitCompareArrows, Bot, Trash2, Search, Pin, PictureInPicture2, Folder, FolderPlus, X } from 'lucide-react'
 import i18n from '../i18n.js'
+import logo from '../assets/aether-logo.png'
 
 const t = i18n.t.bind(i18n)
 
@@ -52,9 +53,9 @@ const rowProps = {
     <aside className="sidebar">
       <div className="sidebar-head">
         <div className="logo">
-          <Sparkles size={20} />
+          <img className="logo-img" src={logo} alt="Aether AI" />
           <div>
-            <h1>Nova AI</h1>
+            <h1>Aether AI</h1>
             <span>{t('sidebar-tagline')}</span>
           </div>
         </div>

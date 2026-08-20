@@ -47,6 +47,7 @@ body {
 .sidebar-head { padding: 14px; display: flex; flex-direction: column; gap: 8px; border-bottom: 1px solid var(--border); }
 
 .logo { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+.logo-img { width: 34px; height: 34px; border-radius: 9px; object-fit: cover; box-shadow: 0 0 14px rgba(99, 102, 241, 0.45); }
 .logo svg { color: var(--accent2); }
 .logo h1 {
   font-size: 17px;

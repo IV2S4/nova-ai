@@ -1,8 +1,8 @@
 {
-  "name": "nova-ai",
-  "productName": "Nova AI",
-  "version": "2.2.3",
-  "description": "Nova AI - Tu asistente de IA todo-en-uno: Claude, GPT, Gemini, Ollama, OpenRouter y mas",
+  "name": "aether-ai",
+  "productName": "Aether AI",
+  "version": "2.3.0",
+  "description": "Aether AI - Tu asistente de IA todo-en-uno: Claude, GPT, Gemini, Ollama, OpenRouter y mas",
   "main": "electron/main.js",
   "license": "MIT",
   "author": {
@@ -44,8 +44,8 @@
     "wait-on": "^8.0.1"
   },
   "build": {
-    "appId": "com.nova.ai",
-    "productName": "Nova AI",
+    "appId": "com.aether.ai",
+    "productName": "Aether AI",
     "compression": "maximum",
     "publish": {
       "provider": "github",
@@ -66,13 +66,13 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "shortcutName": "Nova AI",
+      "shortcutName": "Aether AI",
       "runAfterFinish": true,
       "deleteAppDataOnUninstall": false,
       "installerIcon": "build/icon.ico",
       "uninstallerIcon": "build/icon.ico",
       "installerHeaderIcon": "build/icon.ico",
-      "artifactName": "Nova AI Setup ${version}.${ext}"
+      "artifactName": "Aether AI Setup ${version}.${ext}"
     }
   }
 }

@@ -1,5 +1,9 @@
 module.exports = {
   entries: {
+    '2.3.0': [
+      '✨ REBRANDING COMPLETO: ahora la app se llama AETHER AI',
+      '🎨 NUEVO LOGO: vórtice de doble espiral en gradiente cian-violeta con brillo neón sobre fondo cósmico — icono de app, instalador y logo del sidebar renovados'
+    ],
     '2.2.3': [
       '🔧 ARREGLADO: los builds ya no salen incompletos. Si el modelo se queda sin tokens a mitad de la página, el agente ahora lo detecta y continúa automáticamente hasta terminar el archivo (hasta 6 continuaciones), en vez de guardar el HTML a medias',
       '🔧 ARREGLADO: el agente ya sabe editar la página después. Antes al leer un archivo grande solo veía la primera mitad y sus cambios fallaban; ahora read_file lee el archivo por fragmentos (offset/length) y le avisa al modelo que lea TODO el archivo antes de editar',

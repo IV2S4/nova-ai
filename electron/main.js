@@ -32,7 +32,7 @@ function createSplash() {
     alwaysOnTop: true,
     center: true,
     skipTaskbar: true,
-    title: 'Nova AI',
+    title: 'Aether AI',
     webPreferences: { sandbox: true }
   })
   splashWin.loadFile(path.join(__dirname, 'splash.html'))
@@ -52,7 +52,7 @@ function createWindow() {
     minHeight: 640,
     show: false,
     backgroundColor: '#0b0e14',
-    title: 'Nova AI',
+    title: 'Aether AI',
     icon: path.join(__dirname, '..', 'build', 'icon.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -82,7 +82,7 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
-  app.setAppUserModelId('com.nova.ai')
+  app.setAppUserModelId('com.aether.ai')
   memory.init(app)
   createSplash()
   const win = createWindow()
@@ -915,10 +915,10 @@ ipcMain.handle('backup:export', async (e) => {
     const win = BrowserWindow.fromWebContents(e.sender)
     const settings = await settingsStore.getSettings(app)
     const all = await historyStore.list(app)
-    const data = { app: 'Nova AI', exportedAt: new Date().toISOString(), settings, history: all }
+    const data = { app: 'Aether AI', exportedAt: new Date().toISOString(), settings, history: all }
     const { canceled, filePath } = await dialog.showSaveDialog(win, {
       title: 'Exportar copia de seguridad',
-      defaultPath: `Nova AI backup ${new Date().toISOString().slice(0, 10)}.json`,
+      defaultPath: `Aether AI backup ${new Date().toISOString().slice(0, 10)}.json`,
       filters: [{ name: 'JSON', extensions: ['json'] }]
     })
     if (canceled || !filePath) return { ok: false }
@@ -940,7 +940,7 @@ ipcMain.handle('backup:import', async (e) => {
     if (canceled || !filePaths.length) return { ok: false }
     const data = JSON.parse(fs.readFileSync(filePaths[0], 'utf8'))
     if (!data || !data.settings || !Array.isArray(data.history)) {
-      return { ok: false, error: 'El archivo no es una copia de seguridad válida de Nova AI' }
+      return { ok: false, error: 'El archivo no es una copia de seguridad válida de Aether AI' }
     }
     await settingsStore.saveSettings(app, data.settings)
     await historyStore.clear(app)

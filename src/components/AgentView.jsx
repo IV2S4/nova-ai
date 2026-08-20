@@ -880,7 +880,7 @@ export default function AgentView({ providers, settings, onOpenSettings }) {
       c.proposals.forEach((p) => lines.push(`- ${p.path} — ${p.applied ? i18n.t('agent.exportApplied') : i18n.t('agent.exportPending')}`))
       lines.push('')
     }
-    await window.api?.exportText?.('Nova AI - Sesion agente.md', lines.join('\n'))
+    await window.api?.exportText?.('Aether AI - Sesion agente.md', lines.join('\n'))
   }
 
   const applyOne = async (p) => {
@@ -1270,7 +1270,7 @@ export default function AgentView({ providers, settings, onOpenSettings }) {
                 <button className="btn primary" onClick={() => setPromptsOpen(true)}><Sparkles size={15} /> Prompts avanzados</button>
                 <button className="btn" onClick={() => setSkillsOpen(true)}><BadgeCheck size={15} /> Skills del agente</button>
                 {!workspace && <button className="btn" onClick={pickWorkspace}><FolderOpen size={15} /> Elegir proyecto</button>}
-                <button className="btn" onClick={openSelf} title="Abre la propia app (Nova AI) como proyecto para que el agente la desarrolle"><Bot size={15} /> Desarrollar Nova AI</button>
+                <button className="btn" onClick={openSelf} title="Abre la propia app (Aether AI) como proyecto para que el agente la desarrolle"><Bot size={15} /> Desarrollar Aether AI</button>
               </div>
               <div className="suggestions">
                 {QUICK_ACTIONS.map((a) => (
