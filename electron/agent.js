@@ -1,5 +1,6 @@
 const { spawn } = require('child_process')
 const fs = require('fs')
+const os = require('os')
 const path = require('path')
 const { getConfig, PROVIDER_DEFS } = require('./providers')
 const websearch = require('./websearch')
@@ -54,6 +55,20 @@ const TOOLS = [
           path: { type: 'string', description: 'Ruta relativa al proyecto del PDF' }
         },
         required: ['path']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'web_fetch',
+      description: 'Visita una página web (como un navegador) y devuelve su contenido en texto. Útil para consultar documentación, leer instrucciones, comprobar información actual o descargar contenido de URLs. No la uses para archivos del proyecto: esos van con read_file.',
+      parameters: {
+        type: 'object',
+        properties: {
+          url: { type: 'string', description: 'URL completa, p. ej. https://...' }
+        },
+        required: ['url']
       }
     }
   },
@@ -393,6 +408,42 @@ async function* runToolStream(name, args, workspace, toolId, signal, settings, s
         yield { type: 'result', result: { ok: true, output: res.text.slice(0, MAX_OUTPUT) } }
         return
       }
+      case 'web_fetch': {
+        let url = String(args.url || '').trim()
+        if (!/^https?:\/\//i.test(url)) url = 'https://' + url
+        const res = await fetch(url, {
+          headers: { 'user-agent': 'Mozilla/5.0 (AetherAI Agent)' },
+          signal: AbortSignal.any([signal, AbortSignal.timeout(30000)])
+        })
+        if (!res.ok) throw new Error(`HTTP ${res.status} al visitar ${url}`)
+        const type = res.headers.get('content-type') || ''
+        let out = ''
+        if (/json/i.test(type)) {
+          out = JSON.stringify(await res.json(), null, 2)
+        } else if (/pdf/i.test(type)) {
+          const p = path.join(os.tmpdir(), 'aether-fetch-' + Date.now() + '.pdf')
+          fs.writeFileSync(p, Buffer.from(await res.arrayBuffer()))
+          const t = await files.extract(p)
+          fs.unlinkSync(p)
+          out = (t && t.text) || 'PDF sin texto extraíble'
+        } else {
+          const html = await res.text()
+          out = html
+            .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+            .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+            .replace(/<[^>]+>/g, ' ')
+            .replace(/&nbsp;/gi, ' ')
+            .replace(/&amp;/gi, '&')
+            .replace(/&lt;/gi, '<')
+            .replace(/&gt;/gi, '>')
+            .replace(/&quot;/gi, '"')
+            .replace(/&#39;/gi, "'")
+            .replace(/\s+/g, ' ')
+            .trim()
+        }
+        yield { type: 'result', result: { ok: true, output: out.slice(0, MAX_OUTPUT) } }
+        return
+      }
       case 'read_file': {
         const p = safeResolve(workspace, args.path)
         const stat = fs.statSync(p)
@@ -619,13 +670,18 @@ async function* streamAnthropicDelta(res, acc) {
     if (done) return content
     if (json.type === 'message_delta' && json.delta?.stop_reason) {
       acc.finished = acc.finished || json.delta.stop_reason === 'max_tokens'
-    } else if (json.type === 'content_block_start' && json.content_block?.type === 'tool_use') {
-      acc.tools[json.index] = { id: json.content_block.id, name: json.content_block.name, input: '' }
+    } else if (json.type === 'content_block_start') {
+      if (json.content_block?.type === 'tool_use') {
+        acc.tools[json.index] = { id: json.content_block.id, name: json.content_block.name, input: '' }
+      } else if (json.content_block?.type === 'thinking') {
+        acc.thinkingSig = json.content_block.signature
+      }
     } else if (json.type === 'content_block_delta') {
       if (json.delta?.type === 'text_delta') {
         content += json.delta.text || ''
         yield { type: 'text', text: json.delta.text || '' }
       } else if (json.delta?.type === 'thinking_delta') {
+        acc.thinking = (acc.thinking || '') + (json.delta.thinking || '')
         yield { type: 'thinking', text: json.delta.thinking || '' }
       } else if (json.delta?.type === 'input_json_delta') {
         acc.tools[json.index] = acc.tools[json.index] || { id: '', name: '', input: '' }
@@ -764,37 +820,50 @@ async function runSubagent(state, task, ctx, depth) {
 async function* runAgentAnthropic(cfg, msgs, signal, workspace, settings, state) {
   const system = msgs.messages.filter((m) => m.role === 'system').map((m) => m.content).join('\n')
   const conv = msgs.messages.filter((m) => m.role !== 'system').map((m) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content }))
-  const maxTokens = msgs._maxTokens || 16384
+  const model = msgs._model
+  const family5 = /^claude-(sonnet-5|opus-5|fable-5)(-|$)/i.test(model)
+  const rejectTemp = family5 || /^claude-(opus-4-8|opus-4-7)(-|$)/i.test(model)
+  const thinkingModel = family5 || /^claude-(opus-4-8|sonnet-4-6|opus-4-7|opus-4-6)/i.test(model)
+  const thinkingParams = thinkingModel
+    ? (family5 ? { thinking: { type: 'adaptive' } } : { thinking: { type: 'enabled', budget_tokens: 8192 } })
+    : null
+  const maxTokens = msgs._maxTokens || (thinkingModel ? 24576 : 16384)
+  const toolsList = msgs._noTools ? undefined : await anthropicTools(settings)
+  const post = (body) => fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: { 'x-api-key': cfg.apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+    signal: AbortSignal.any([signal, AbortSignal.timeout(300000)])
+  })
+  const bodyBase = { model, max_tokens: maxTokens, ...(msgs._temperature != null && !rejectTemp ? { temperature: msgs._temperature } : {}), system: system || undefined, messages: conv, ...(toolsList ? { tools: toolsList } : {}), stream: true }
+  const bodyExtra = { ...(thinkingParams || {}), ...(family5 ? { effort: 'high' } : {}) }
   let cont = 0
   for (let i = 0; i < MAX_ITERS; i++) {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'x-api-key': cfg.apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-      body: JSON.stringify({
-        model: msgs._model,
-        max_tokens: maxTokens,
-        ...(msgs._temperature != null ? { temperature: msgs._temperature } : {}),
-        system: system || undefined,
-        messages: conv,
-        ...(msgs._noTools ? {} : { tools: await anthropicTools(settings) }),
-        stream: true
-      }),
-      signal: AbortSignal.any([signal, AbortSignal.timeout(300000)])
-    })
+    let res = await post({ ...bodyBase, ...bodyExtra })
     if (!res.ok) {
       const err = await res.json().catch(() => ({}))
-      throw new Error(err.error?.message || `Error HTTP ${res.status}`)
+      const msg = err.error?.message || `Error HTTP ${res.status}`
+      if (thinkingParams && /thinking|budget|effort|temperature|top_p|top_k/i.test(msg)) {
+        res = await post(bodyBase)
+        if (!res.ok) {
+          const err2 = await res.json().catch(() => ({}))
+          throw new Error(err2.error?.message || `Error HTTP ${res.status}`)
+        }
+      } else {
+        throw new Error(msg)
+      }
     }
-    const acc = { tools: [], finished: false }
+    const acc = { tools: [], finished: false, thinking: '', thinkingSig: null }
     let content = ''
     for await (const ev of streamAnthropicDelta(res, acc)) {
       if (ev.type === 'thinking') yield { type: 'thinking', text: ev.text }
       else { content += ev.text; yield { type: 'text', text: ev.text } }
     }
+    const thinkingBlock = acc.thinking ? [{ type: 'thinking', thinking: acc.thinking, ...(acc.thinkingSig ? { signature: acc.thinkingSig } : {}) }] : []
     const tools = acc.tools
     if (!tools.length) {
       if (acc.finished && cont < MAX_CONTINUE) {
-        conv.push({ role: 'assistant', content: content ? [{ type: 'text', text: content }] : [] })
+        conv.push({ role: 'assistant', content: [...thinkingBlock, ...(content ? [{ type: 'text', text: content }] : [])] })
         conv.push({ role: 'user', content: CONTINUE_MSG })
         cont++
         continue
@@ -810,6 +879,7 @@ async function* runAgentAnthropic(cfg, msgs, signal, workspace, settings, state)
     conv.push({
       role: 'assistant',
       content: [
+        ...thinkingBlock,
         ...(content ? [{ type: 'text', text: content }] : []),
         ...parsed.map((t) => ({ type: 'tool_use', id: t.id, name: t.name, input: t.input }))
       ]

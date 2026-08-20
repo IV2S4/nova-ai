@@ -1,5 +1,11 @@
 module.exports = {
   entries: {
+    '2.3.3': [
+      '🤖 SOPORTE COMPLETO DE CLAUDE SONNET 5: razonamiento adaptativo (thinking) + effort alto activados automáticamente en el agente y el chat, con reenvío correcto de los bloques de pensamiento y su firma entre turnos de herramientas',
+      '🔧 Corregido el HTTP 400 de Sonnet 5 (y Opus 4.7+): ya no se envían temperature/top_p/top_k, que la API rechaza en estos modelos',
+      '🌐 Nueva herramienta web_fetch: el agente puede visitar páginas web (como un navegador), leer documentación o contenido de URLs para completar tus tareas',
+      '🔧 Si el razonamiento adaptativo fallara en algún modelo, la app reintenta automáticamente en modo normal'
+    ],
     '2.3.2': [
       '⚡ FALLBACK AUTOMÁTICO: si tu proveedor está saturado o sin cuota, la app cambia sola a otro proveedor (p. ej. Gemini → OpenRouter) y continúa tu petición sin que pulses nada. Verás un aviso en el chat de qué modelo respondió',
       '🧠 MEJOR MEMORIA: al continuar una sesión, el agente ahora conoce los archivos que creó/modificó antes, sus rutas y sus resultados reales — edita tu página con más precisión sin volver a adivinar',

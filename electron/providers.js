@@ -296,6 +296,11 @@ async function* streamAnthropic(cfg, req, msgs, signal) {
     })
   const budgetMap = { bajo: 2048, medio: 8192, alto: 16384 }
   const thinkingBudget = req.reasoningEffort ? budgetMap[req.reasoningEffort] : (req.showThinking ? 8192 : undefined)
+  const family5 = /^claude-(sonnet-5|opus-5|fable-5)(-|$)/i.test(req.model)
+  const rejectTemp = family5 || /^claude-(opus-4-8|opus-4-7)(-|$)/i.test(req.model)
+  const thinkingParams = family5
+    ? { thinking: { type: 'adaptive' }, ...(req.showThinking || req.reasoningEffort ? { effort: 'high' } : {}) }
+    : (thinkingBudget ? { thinking: { type: 'enabled', budget_tokens: thinkingBudget } } : null)
 
   const send = (withThinking) => fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -306,12 +311,12 @@ async function* streamAnthropic(cfg, req, msgs, signal) {
     },
     body: JSON.stringify({
       model: req.model,
-      max_tokens: req.maxTokens || 8192,
-      temperature: req.temperature ?? 0.7,
+      max_tokens: req.maxTokens || (family5 ? 24576 : 8192),
+      ...(rejectTemp ? {} : { temperature: req.temperature ?? 0.7 }),
       system: system || undefined,
       messages: content,
       stream: true,
-      ...(withThinking ? { thinking: { type: 'enabled', budget_tokens: thinkingBudget } } : {})
+      ...(withThinking ? thinkingParams : {})
     }),
     signal
   })
@@ -330,10 +335,10 @@ async function* streamAnthropic(cfg, req, msgs, signal) {
     yield { type: 'done' }
   })()
 
-  let res = await send(!!thinkingBudget)
+  let res = await send(!!thinkingParams)
   if (!res.ok) {
     const err = await res.json().catch(() => ({}))
-    if (thinkingBudget && /thinking|budget|400/i.test(err.error?.message || '')) {
+    if (thinkingParams && /thinking|budget|effort|temperature|top_p|top_k|400/i.test(err.error?.message || '')) {
       res = await send(false)
     } else {
       throw new Error(err.error?.message || `Error HTTP ${res.status}`)
@@ -346,7 +351,7 @@ async function* streamAnthropic(cfg, req, msgs, signal) {
   try {
     yield* consume(res)
   } catch (e) {
-    if (!thinkingBudget) throw e
+    if (!thinkingParams) throw e
     const retry = await send(false)
     if (!retry.ok) throw e
     yield* consume(retry)
@@ -698,10 +703,19 @@ async function completeCode(settings, req) {
   const maxTokens = 80
 
   if (req.provider === 'anthropic') {
+    const family5 = /^claude-(sonnet-5|opus-5|fable-5)(-|$)/i.test(req.model)
+    const rejectTemp = family5 || /^claude-(opus-4-8|opus-4-7)(-|$)/i.test(req.model)
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'x-api-key': cfg.apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-      body: JSON.stringify({ model: req.model, max_tokens: maxTokens, temperature, system: sys, messages: [{ role: 'user', content: code }] }),
+      body: JSON.stringify({
+        model: req.model,
+        max_tokens: maxTokens,
+        ...(rejectTemp ? {} : { temperature }),
+        ...(family5 ? { thinking: { type: 'adaptive' }, effort: 'low' } : {}),
+        system: sys,
+        messages: [{ role: 'user', content: code }]
+      }),
       signal: AbortSignal.timeout(25000)
     })
     const data = await res.json()
