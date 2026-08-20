@@ -74,7 +74,7 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'read_file',
-      description: 'Lee el contenido completo de un archivo del proyecto. Útil para entender o revisar código.',
+      description: 'Lee el contenido de un archivo del proyecto. OBLIGATORIO usarla antes de editar un archivo: solo puedes editar con el texto real que esta herramienta devuelve. Si el archivo es grande se devuelve por fragmentos (offset/length): léelo completo. Si dudas del nombre exacto, usa list_files.',
       parameters: {
         type: 'object',
         properties: {
@@ -88,7 +88,7 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'write_file',
-      description: 'Crea o sobrescribe un archivo del proyecto con el contenido dado. Usa esto para implementar cambios.',
+      description: 'Crea un archivo NUEVO o sobrescribe uno existente con el contenido completo. Para cambiar solo una parte de un archivo existente usa edit_file. El contenido va aquí, nunca en tu respuesta de texto.',
       parameters: {
         type: 'object',
         properties: {
@@ -103,7 +103,7 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'edit_file',
-      description: 'Edita trozos concretos de un archivo sin reescribirlo entero. Recibe una lista de ediciones, cada una con oldText (texto existente, debe aparecer UNA sola vez) y newText (texto nuevo).',
+      description: 'Edita trozos concretos de un archivo existente sin reescribirlo entero. PRIMERO lee el archivo con read_file y usa oldText COPIADO EXACTAMENTE de lo que devolvió (nunca inventes el contenido). El oldText debe aparecer UNA sola vez. Recibe una lista de ediciones, cada una con oldText y newText.',
       parameters: {
         type: 'object',
         properties: {
@@ -192,7 +192,8 @@ Reglas de trabajo:
 - Los comandos se ejecutan en la carpeta del proyecto; no borres archivos del usuario.
 - Responde en el idioma del usuario, sé conciso y explica las decisiones importantes.
 - Cuando termines la tarea, resume qué hiciste y qué comandos ejecutaste.
-- REGLA DE ORO: el código completo de un archivo va SIEMPRE dentro de write_file/edit_file, nunca en tu respuesta de texto. No repitas el contenido del archivo en el mensaje final: limítate a decir qué archivo creaste o modificaste (ruta), qué hace y cómo verlo o probarlo (p. ej. "usa el botón Vista previa para ver la página"). Si el usuario te pide explícitamente que le muestres el código en el chat, entonces sí puedes pegarlo.`
+- REGLA DE ORO: el código completo de un archivo va SIEMPRE dentro de write_file/edit_file, nunca en tu respuesta de texto. No repitas el contenido del archivo en el mensaje final: limítate a decir qué archivo creaste o modificaste (ruta), qué hace y cómo verlo o probarlo (p. ej. "usa el botón Vista previa para ver la página"). Si el usuario te pide explícitamente que le muestres el código en el chat, entonces sí puedes pegarlo.
+- REGLA DE ORO PARA EDITAR: antes de usar edit_file lee SIEMPRE el archivo con read_file (o búscalo con search_codebase) y copia los oldText EXACTAMENTE de lo leído. NUNCA inventes contenido ni nombres de archivo: si dudas de la ruta, usa list_files. Si una edición falla porque el texto no existe, vuelve a leer el archivo y reintenta con el texto real.`
 
 function safeResolve(workspace, rel) {
   const base = path.resolve(workspace)
@@ -853,7 +854,7 @@ function msgsToGemini(messages) {
     }
     const parts = []
     if (m.content) parts.push({ text: m.content })
-    for (const fc of m.functionCalls || []) parts.push({ functionCall: { name: fc.name, args: fc.args } })
+    for (const fc of m.functionCalls || []) parts.push({ functionCall: { name: fc.name, args: fc.args }, ...(fc.thoughtSignature ? { thought_signature: fc.thoughtSignature } : {}) })
     if (parts.length) contents.push({ role: m.role === 'assistant' ? 'model' : 'user', parts })
   }
   return { system, contents }
@@ -872,7 +873,7 @@ async function* streamGeminiDelta(res, acc) {
         text += p.text
         yield { type: 'text', text: p.text }
       }
-      else if (p.functionCall) acc.calls.push({ name: p.functionCall.name, args: p.functionCall.args || {} })
+      else if (p.functionCall) acc.calls.push({ name: p.functionCall.name, args: p.functionCall.args || {}, thoughtSignature: p.thoughtSignature || p.thought_signature || p.functionCall.thoughtSignature || p.functionCall.thought_signature || null })
     }
     if (json?.promptFeedback?.blockReason) {
       throw new Error('Petición bloqueada por Gemini: ' + json.promptFeedback.blockReason)

@@ -298,6 +298,7 @@ export default function AgentView({ providers, settings, onOpenSettings }) {
   const [verifyBusy, setVerifyBusy] = useState(false)
   const [verifyResult, setVerifyResult] = useState(null)
   const [suggestion, setSuggestion] = useState('')
+  const [satSuggestion, setSatSuggestion] = useState(null)
   const [preview, setPreview] = useState(null)
   const [previewTab, setPreviewTab] = useState('preview')
   const [previewDraft, setPreviewDraft] = useState('')
@@ -598,6 +599,7 @@ export default function AgentView({ providers, settings, onOpenSettings }) {
         setBusy(false)
         setThinking('')
         setError(ev.message)
+        setSatSuggestion(ev.suggestion || null)
         saveSession({ done: false, error: ev.message })
       }
     })
@@ -652,6 +654,7 @@ export default function AgentView({ providers, settings, onOpenSettings }) {
       prompt = `${prompt}\n\nReferencias del proyecto:\n${ctx}`
     }
     setError('')
+    setSatSuggestion(null)
     tokensRef.current = 0
     setTokensChars(0)
     if (!override) autoFixCountRef.current = 0
@@ -675,6 +678,15 @@ export default function AgentView({ providers, settings, onOpenSettings }) {
   }
 
   useEffect(() => { sendRef.current = send }, [send])
+
+  const applySaturationSuggestion = () => {
+    if (!satSuggestion || busy) return
+    if (satSuggestion.provider) setProviderId(satSuggestion.provider)
+    if (satSuggestion.model) setModel(satSuggestion.model)
+    const lastPrompt = metaRef.current?.prompt || input
+    setSatSuggestion(null)
+    setTimeout(() => sendRef.current?.(lastPrompt), 300)
+  }
 
   const buildContext = (s) => {
     const parts = []
@@ -810,8 +822,48 @@ export default function AgentView({ providers, settings, onOpenSettings }) {
     if (text == null) return
     setPreview(rel)
     setPreviewDraft(text)
-    setPreviewShown(text)
+    setPreviewShown(await inlineAssets(text, workspace, rel))
     setPreviewTab('preview')
+  }
+
+  const inlineAssets = async (html, ws, rel) => {
+    try {
+      const doc = new DOMParser().parseFromString(html, 'text/html')
+      const baseDir = rel.includes('/') ? rel.slice(0, rel.lastIndexOf('/') + 1) : ''
+      const resolve = (u) => {
+        if (!u || /^(https?:|data:|blob:|mailto:|tel:|#|\/\/)/i.test(u)) return null
+        return (baseDir + u).replace(/^\.\//, '').split('?')[0]
+      }
+      for (const link of [...doc.querySelectorAll('link[rel="stylesheet"]')]) {
+        const r = resolve(link.getAttribute('href'))
+        if (!r) continue
+        const css = await window.api?.readWorkspaceFile(ws, r)
+        if (css == null) continue
+        const st = doc.createElement('style')
+        st.textContent = css
+        link.replaceWith(st)
+      }
+      for (const s of [...doc.querySelectorAll('script[src]')]) {
+        const r = resolve(s.getAttribute('src'))
+        if (!r) continue
+        const js = await window.api?.readWorkspaceFile(ws, r)
+        if (js == null) continue
+        s.removeAttribute('src')
+        s.textContent = js
+      }
+      for (const img of [...doc.querySelectorAll('img[src]')]) {
+        const r = resolve(img.getAttribute('src'))
+        if (!r) continue
+        const b = await window.api?.readWorkspaceFileB64(ws, r)
+        if (!b?.ok) continue
+        img.setAttribute('src', `data:${b.mime};base64,${b.base64}`)
+      }
+      return html.includes('<!doctype') || html.includes('<!DOCTYPE')
+        ? '<!DOCTYPE html>\n' + doc.documentElement.outerHTML
+        : doc.documentElement.outerHTML
+    } catch {
+      return html
+    }
   }
 
   const updatePreviewDraft = (val) => {
@@ -1382,7 +1434,16 @@ export default function AgentView({ providers, settings, onOpenSettings }) {
             </div>
           )}
 
-          {error && <div className="error-box">{error}</div>}
+          {error && (
+            <div className="error-box">
+              {error}
+              {satSuggestion && (
+                <button className="btn small sat-btn" onClick={applySaturationSuggestion} disabled={busy} title="Cambia el modelo y reenvía tu última petición automáticamente">
+                  <RefreshCw size={12} /> {satSuggestion.label} y reintentar
+                </button>
+              )}
+            </div>
+          )}
 
           {cpId && (
             <div className="cp-banner">

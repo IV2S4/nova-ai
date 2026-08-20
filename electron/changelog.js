@@ -1,5 +1,13 @@
 module.exports = {
   entries: {
+    '2.3.1': [
+      '🔧 ARREGLADO (importante): el agente fallaba con Gemini 3.x con el error "missing thought_signature". Ahora captura y devuelve la firma de pensamiento que exige la API: las herramientas vuelven a funcionar con gemini-3.7-flash / 3.6-flash',
+      '🔧 EL AGENTE YA SABE EDITAR LA PÁGINA: regla de oro nueva — antes de edit_file SIEMPRE lee el archivo con read_file y copia los textos exactos. Nunca inventa contenido ni nombres de archivo (si duda, usa list_files)',
+      '🔧 Botón "Usar gemini-3.7-flash y reintentar" en el aviso de saturación: cambia el modelo y reenvía tu petición con un clic',
+      '🔧 Reintentos mejorados: ahora también reintenta cuando el 429 viene en el código de error (p. ej. OpenRouter "Provider returned error")',
+      '🌐 VISTA PREVIA COMPLETA: el preview ahora incrusta automáticamente los CSS, JS e imágenes locales del proyecto — la página se ve 100% real aunque use archivos separados',
+      '💾 Tus datos se mantienen: al actualizar a Aether AI la app sigue usando la misma carpeta de datos (claves, sesiones, memoria)'
+    ],
     '2.3.0': [
       '✨ REBRANDING COMPLETO: ahora la app se llama AETHER AI',
       '🎨 NUEVO LOGO: vórtice de doble espiral en gradiente cian-violeta con brillo neón sobre fondo cósmico — icono de app, instalador y logo del sidebar renovados'

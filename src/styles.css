@@ -1271,3 +1271,6 @@ body {
 
 .tool-output-more { display: block; width: 100%; background: none; border: none; border-top: 1px solid var(--border); color: var(--accent); font-size: 12px; padding: 6px; cursor: pointer; }
 .tool-output-more:hover { background: rgba(99, 102, 241, 0.08); }
+
+.sat-btn { margin-top: 8px; border-color: rgba(52, 211, 153, 0.4) !important; color: #34d399 !important; }
+.sat-btn:hover { background: rgba(52, 211, 153, 0.1) !important; }

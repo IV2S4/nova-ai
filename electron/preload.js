@@ -53,6 +53,7 @@ contextBridge.exposeInMainWorld('api', {
   projectIndex: (id) => ipcRenderer.invoke('project:index', id),
   listDir: (workspace, rel) => ipcRenderer.invoke('fs:listDir', { workspace, rel }),
   readWorkspaceFile: (workspace, rel) => ipcRenderer.invoke('workspace:readFile', { workspace, rel }),
+  readWorkspaceFileB64: (workspace, rel) => ipcRenderer.invoke('workspace:readFileB64', { workspace, rel }),
   listWorkspaceFiles: (workspace, rel, pattern) => ipcRenderer.invoke('workspace:listFiles', { workspace, rel, pattern }),
   readWorkspaceFolder: (workspace, rel, maxFiles) => ipcRenderer.invoke('workspace:readFolder', { workspace, rel, maxFiles }),
   readWorkspaceRules: (workspace) => ipcRenderer.invoke('workspace:readRules', { workspace }),

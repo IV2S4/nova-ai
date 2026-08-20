@@ -17,6 +17,8 @@ const mcp = require('./mcp')
 const terminal = require('./terminal')
 const { autoUpdater } = require('electron-updater')
 
+app.setPath('userData', path.join(app.getPath('appData'), 'Nova AI'))
+
 const activeRequests = new Map()
 
 let splashWin = null
@@ -159,6 +161,13 @@ const NO_CREDIT = /insufficient (balance|credits|quota|funds)|not enough (credit
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
+function saturatedSuggestion(providerId) {
+  if (providerId === 'google') return { label: 'Usar gemini-3.7-flash', provider: 'google', model: 'gemini-3.7-flash' }
+  if (providerId === 'openrouter') return { label: 'Probar un modelo :free', provider: 'openrouter', model: 'meta-llama/llama-3.3-70b-instruct:free' }
+  if (providerId === 'groq') return { label: 'Probar otro modelo de Groq', provider: 'groq', model: '' }
+  return null
+}
+
 async function* withRetry(factory, attempts = 3, baseDelay = 3500) {
   let emitted = false
   for (let a = 1; a <= attempts; a++) {
@@ -169,8 +178,8 @@ async function* withRetry(factory, attempts = 3, baseDelay = 3500) {
       }
       return
     } catch (err) {
-      const msg = err?.message || ''
-      if (a < attempts && RETRYABLE.test(msg) && !emitted && !err?.signal?.aborted) {
+      const raw = `${err?.message || ''} ${err?.code ?? ''}`.trim()
+      if (a < attempts && RETRYABLE.test(raw) && !emitted && !err?.signal?.aborted) {
         await sleep(baseDelay * a)
         continue
       }
@@ -315,7 +324,13 @@ ipcMain.handle('agent:send', async (e, req) => {
       if (!ctrl.signal.aborted && !e.sender.isDestroyed()) {
         const raw = err?.message || 'Error desconocido'
         const cause = err?.cause?.code || err?.cause?.message
-        e.sender.send('agent:event', { id: req.id, type: 'error', message: friendlyError(cause && raw === 'fetch failed' ? `${raw} (${cause})` : raw, req.provider) })
+        const message = friendlyError(cause && raw === 'fetch failed' ? `${raw} (${cause})` : raw, req.provider)
+        e.sender.send('agent:event', {
+          id: req.id,
+          type: 'error',
+          message,
+          suggestion: RETRYABLE.test(raw) ? saturatedSuggestion(req.provider) : null
+        })
       }
     } finally {
       activeRequests.delete(req.id)
@@ -976,6 +991,22 @@ ipcMain.handle('workspace:readFile', async (_e, { workspace, rel }) => {
     if (stat.size > 2 * 1024 * 1024) return { ok: false, error: 'Archivo demasiado grande para @mención (máx. 2 MB)' }
     const text = fs.readFileSync(full, 'utf8')
     return { ok: true, name: path.basename(rel), path: rel, text, size: stat.size }
+  } catch (e) {
+    return { ok: false, error: e.message }
+  }
+})
+
+ipcMain.handle('workspace:readFileB64', async (_e, { workspace, rel }) => {
+  try {
+    const fs = require('fs')
+    const path = require('path')
+    const agent = require('./agent')
+    const full = agent.safeResolve(workspace, rel)
+    const stat = fs.statSync(full)
+    if (!stat.isFile()) return { ok: false, error: 'No es un archivo' }
+    if (stat.size > 2 * 1024 * 1024) return { ok: false, error: 'Archivo demasiado grande' }
+    const mimes = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.woff': 'font/woff', '.woff2': 'font/woff2', '.ttf': 'font/ttf' }
+    return { ok: true, base64: fs.readFileSync(full).toString('base64'), mime: mimes[path.extname(full).toLowerCase()] || 'application/octet-stream' }
   } catch (e) {
     return { ok: false, error: e.message }
   }
